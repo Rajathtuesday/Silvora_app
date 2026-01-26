@@ -1,16 +1,28 @@
-# silvora_app
+# Silvora App (Flutter)
 
-A new Flutter project.
+Silvora is a secure cloud storage platform.  
+This repository contains the **Flutter client application** used for accessing Silvora on mobile.
 
-## Getting Started
+---
 
-This project is a starting point for a Flutter application.
+## Overview
 
-A few resources to get you started if this is your first Flutter project:
+The Silvora Flutter app focuses on:
+- Secure file access
+- Encrypted uploads and downloads
+- Cross-platform support (Android & iOS)
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+This client communicates with a Django-based backend and is designed to support end-to-end encryption workflows.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+---
+
+## Current Status
+
+This repository represents a **frozen snapshot** intended for:
+- Internal testing
+- Portfolio demonstration
+
+Core flows are functional.  
+UI polish and extended edge-case handling are intentionally deferred.
+
+See `FREEZE.md` for de
