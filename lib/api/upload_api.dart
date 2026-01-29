@@ -6,7 +6,7 @@ import '../state/secure_state.dart';
 class UploadApi {
   final Dio _dio = Dio(
     BaseOptions(
-      baseUrl: SecureState.serverUrl,
+      baseUrl: SecureState.serverBaseUrl,
       connectTimeout: const Duration(seconds: 20),
       receiveTimeout: const Duration(seconds: 60),
     ),

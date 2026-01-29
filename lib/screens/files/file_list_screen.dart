@@ -1,12 +1,15 @@
-// ==============================================================
-// lib/screens/files/file_list_screen.dart
+
+//------------------------------------------------------------------------------------------------
+// File: lib/screens/files/file_list_screen.dart
+//------------------------------------------------------------------------------------------------
+import 'dart:async';
 import 'package:flutter/material.dart';
+
 import 'package:silvora_app/screens/files/trash_screen.dart';
 import 'package:silvora_app/services/quota_service.dart';
 import 'package:silvora_app/widgets/brand_logo.dart';
 
 import '../../services/api_services.dart';
-import '../../services/download_and_decrypt_service.dart';
 import '../../state/secure_state.dart';
 import '../../widgets/storage_usage_card.dart';
 import '../login/login_screen.dart';
@@ -30,102 +33,93 @@ class _FileListScreenState extends State<FileListScreen>
   int _limitBytes = 0;
   bool _quotaAvailable = false;
 
+  Timer? _idleTimer;
+  static const Duration _idleTimeout = Duration(minutes: 3);
+
+  bool _showSwipeHint = true;
+
+  // ───────────────── INIT / DISPOSE ─────────────────
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _resetIdleTimer();
     _loadFuture = _loadAll();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _idleTimer?.cancel();
     super.dispose();
   }
 
-  // ─────────────────────────────────────────────
-  // SECURITY: AUTO-LOCK ON BACKGROUND
-  // ─────────────────────────────────────────────
+  // ───────────────── IDLE SECURITY ─────────────────
 
-  // @override
-  // void didChangeAppLifecycleState(AppLifecycleState state) {
-  //   if (state == AppLifecycleState.detached) {
-  //     SecureState.lock();
-  //   }
-  // }
-  // @override
-  // void didChangeAppLifecycleState(AppLifecycleState state) {
-  //   if (state == AppLifecycleState.paused ||
-  //       state == AppLifecycleState.detached) {
-  //     _handleAutoLogout();
-  //   }
-  // }
+  void _resetIdleTimer() {
+    _idleTimer?.cancel();
+    _idleTimer = Timer(_idleTimeout, _autoLogout);
+  }
 
-  // void _handleAutoLogout() {
-  //   SecureState.fullLogout().then((_) {
-  //     if (!mounted) return;
+  Future<void> _autoLogout() async {
+    await SecureState.logout();
+    if (!mounted) return;
 
-  //     Navigator.pushAndRemoveUntil(
-  //       context,
-  //       MaterialPageRoute(builder: (_) => const LoginScreen()),
-  //       (_) => false,
-  //     );
-  //   });
-  // }
-  
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (_) => false,
+    );
+  }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // ⚠️ file picker triggers paused → DO NOT logout
+    if (state == AppLifecycleState.detached) {
+      _autoLogout();
+    }
+  }
 
-  // ─────────────────────────────────────────────
-  // DATA LOADING
-  // ─────────────────────────────────────────────
- 
- Future<void> _loadAll() async {
-    print("🔄 [FILES] Loading file list and quota");
+  // ───────────────── DATA ─────────────────
+
+  Future<void> _loadAll() async {
     final files = await ApiService.listFiles();
-    print("📁 [FILES] Fetched ${files.length} files");
     _files
       ..clear()
       ..addAll(files);
-    try{
-      print("🔄 [QUOTA] Loading quota");
-    final quota = await QuotaService.fetchQuota();
-    print("📊 [QUOTA] Used: ${quota.used} / Limit: ${quota.limit}");
-    _usedBytes = quota.used;
-    _limitBytes = quota.limit;
-    _quotaAvailable=true;
-  } catch (e){
-    //non-faital :show files 
-    print("⚠️ [QUOTA] Failed to fetch quota: $e");
-    _usedBytes=0;
-    _limitBytes=0;
-    
+
+    try {
+      final quota = await QuotaService.fetchQuota();
+      _usedBytes = quota.used;
+      _limitBytes = quota.limit;
+      _quotaAvailable = true;
+    } catch (_) {
+      _quotaAvailable = false;
+    }
   }
-}
 
   Future<void> _refresh() async {
-    setState(() {
-      _loadFuture = _loadAll();
-    });
-    await _loadFuture;
+    final future = _loadAll();
+    setState(() => _loadFuture = future);
+    await future;
   }
 
-  // ─────────────────────────────────────────────
-  // ACTIONS
-  // ─────────────────────────────────────────────
+  // ───────────────── ACTIONS ─────────────────
 
-  void _openUpload() async {
+  Future<void> _openUpload() async {
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const UploadScreen()),
     );
-    if (mounted) _refresh();
+    if (mounted) await _refresh();
   }
 
   Future<void> _confirmLogout() async {
     final ok = await showDialog<bool>(
           context: context,
           builder: (_) => AlertDialog(
-            title: const Text("Log out?"),
+            title: const Text("Log out"),
             content: const Text("Your vault will be locked on this device."),
             actions: [
               TextButton(
@@ -141,21 +135,82 @@ class _FileListScreenState extends State<FileListScreen>
         ) ??
         false;
 
-    if (!ok) return;
-
-    // await SecureState.fullLogout();
-
-    if (!mounted) return;
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
-      (_) => false,
-    );
+    if (ok) await _autoLogout();
   }
 
-  // ─────────────────────────────────────────────
-  // HELPERS
-  // ─────────────────────────────────────────────
+  // ───────────────── FILE ICON LOGIC ─────────────────
+
+  IconData _iconFor(String name) {
+    final f = name.toLowerCase();
+    if (f.endsWith('.pdf')) return Icons.picture_as_pdf_rounded;
+    if (f.endsWith('.jpg') || f.endsWith('.jpeg') || f.endsWith('.png')) {
+      return Icons.image_rounded;
+    }
+    if (f.endsWith('.doc') || f.endsWith('.docx')) {
+      return Icons.article_rounded;
+    }
+    if (f.endsWith('.txt') || f.endsWith('.md')) {
+      return Icons.description_rounded;
+    }
+    if (f.endsWith('.xls') || f.endsWith('.xlsx') || f.endsWith('.csv')) {
+      return Icons.table_chart_rounded;
+    }
+    if (f.endsWith('.ppt') || f.endsWith('.pptx')) {
+      return Icons.slideshow_rounded;
+    }
+    if (f.endsWith('.zip') || f.endsWith('.rar') || f.endsWith('.7z')) {
+      return Icons.folder_zip_rounded;
+    }
+    if (f.endsWith('.mp3') || f.endsWith('.wav')) {
+      return Icons.music_note_rounded;
+    }
+    if (f.endsWith('.mp4') || f.endsWith('.mkv') || f.endsWith('.mov')) {
+      return Icons.movie_rounded;
+    }
+    if (f.endsWith('.js') ||
+        f.endsWith('.py') ||
+        f.endsWith('.dart') ||
+        f.endsWith('.java')) {
+      return Icons.code_rounded;
+    }
+    return Icons.insert_drive_file_rounded;
+  }
+
+  Color _iconColor(String name) {
+    final f = name.toLowerCase();
+    if (f.endsWith('.pdf')) return Colors.redAccent;
+    if (f.endsWith('.jpg') || f.endsWith('.jpeg') || f.endsWith('.png')) {
+      return Colors.blueAccent;
+    }
+    if (f.endsWith('.doc') || f.endsWith('.docx')) {
+      return Colors.indigo;
+    }
+    if (f.endsWith('.txt') || f.endsWith('.md')) {
+      return Colors.green;
+    }
+    if (f.endsWith('.xls') || f.endsWith('.xlsx') || f.endsWith('.csv')) {
+      return Colors.teal;
+    }
+    if (f.endsWith('.ppt') || f.endsWith('.pptx')) {
+      return Colors.orange;
+    }
+    if (f.endsWith('.zip') || f.endsWith('.rar') || f.endsWith('.7z')) {
+      return Colors.brown;
+    }
+    if (f.endsWith('.mp3') || f.endsWith('.wav')) {
+      return Colors.deepPurple;
+    }
+    if (f.endsWith('.mp4') || f.endsWith('.mkv') || f.endsWith('.mov')) {
+      return Colors.cyan;
+    }
+    if (f.endsWith('.js') ||
+        f.endsWith('.py') ||
+        f.endsWith('.dart') ||
+        f.endsWith('.java')) {
+      return Colors.amber;
+    }
+    return Colors.grey;
+  }
 
   String _formatSize(int bytes) {
     final mb = bytes / (1024 * 1024);
@@ -164,183 +219,129 @@ class _FileListScreenState extends State<FileListScreen>
         : "${mb.toStringAsFixed(2)} MB";
   }
 
-  IconData _iconFor(String name) {
-    final f = name.toLowerCase();
-    if (f.endsWith('.pdf')) return Icons.picture_as_pdf_rounded;
-    if (f.endsWith('.jpg') || f.endsWith('.png')) return Icons.image_rounded;
-    if (f.endsWith('.doc') || f.endsWith('.docx')) return Icons.article_rounded;
-    if (f.endsWith('.txt')) {
-      return Icons.description_rounded;
-    }
-    return Icons.insert_drive_file_rounded;
-  }
-
-  Color _iconColor(String name) {
-    final f = name.toLowerCase();
-    if (f.endsWith('.pdf')) return Colors.redAccent;
-    if (f.endsWith('.jpg') || f.endsWith('.png')) return Colors.blueAccent;
-    if (f.endsWith('.doc') || f.endsWith('.docx')) return Colors.indigo;
-    return Colors.grey;
-  }
-
-  // ─────────────────────────────────────────────
-  // UI
-  // ─────────────────────────────────────────────
+  // ───────────────── UI ─────────────────
 
   @override
   Widget build(BuildContext context) {
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const SilvoraLogo(fontSize: 20),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: "Trash",
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const TrashScreen()),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: _confirmLogout,
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _openUpload,
-        icon: const Icon(Icons.upload_file),
-        label: const Text("Upload"),
-      ),
-      body: FutureBuilder<void>(
-        future: _loadFuture,
-        builder: (_, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return _loadingSkeleton();
-          }
-
-          if (snap.hasError) {
-            return const Center(
-              child: Text(
-                "Failed to load files",
-                style: TextStyle(color: Colors.white70),
-              ),
-            );
-          }
-
-          if (_files.isEmpty) {
-            return RefreshIndicator(
-              onRefresh: _refresh,
-              child: ListView(
-                children: const [
-                  SizedBox(height: 200),
-                  Center(
-                    child: Text(
-                      "No files yet.\nUpload your first file.",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white70),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }
-
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: _files.length + 1,
-              itemBuilder: (_, i) {
-                if (i == 0) {
-                  return _quotaAvailable ?                  
-                   StorageUsageCard(
-                    usedBytes: _usedBytes,
-                    limitBytes: _limitBytes,
-                  )
-                  : const Padding(
-                    padding: EdgeInsets.only(bottom: 10),
-                    child: Center(
-                      child: Text(
-                        "Storage quota unavailable",
-                        style: TextStyle(color: Colors.white70),
-                      ),
-                    ),
-                  );
-                }
-
-                final f = _files[i - 1];
-                final name = f['filename'] as String;
-                final size = (f['size'] as num).toInt();
-
-                return Dismissible(
-                  key: ValueKey(f['file_id']),
-                  direction: DismissDirection.endToStart,
-                  background: Container(
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.only(right: 20),
-                    color: Colors.redAccent,
-                    child: const Icon(Icons.delete, color: Colors.white),
-                  ),
-                  onDismissed: (_) async {
-                    _files.removeAt(i - 1);
-                    setState(() {});
-
-                    await ApiService.deleteFile(f['file_id']);
-                  },
-                  child: Card(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    child: ListTile(
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => FilePreviewScreen(
-                              fileId: f['file_id'],
-                              filename: name,
-                            ),
-                          ),
-                        );
-                      },
-                      leading: CircleAvatar(
-                        backgroundColor:
-                            _iconColor(name).withValues(alpha: 0.12),
-                        child:
-                            Icon(_iconFor(name), color: _iconColor(name)),
-                      ),
-                      title: Text(
-                        name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(_formatSize(size)),
-                      trailing: PopupMenuButton<String>(
-                        onSelected: (v) async {
-                          if (v == 'download') {
-                            await DownloadAndDecryptService
-                                .downloadAndDecrypt(
-                              fileId: f['file_id'],
-                              filename: name,
-                            );
-                          }
-                        },
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(
-                            value: 'download',
-                            child: Text("Download"),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => _resetIdleTimer(),
+      child: Scaffold(
+        appBar: AppBar(
+          title: const SilvoraLogo(fontSize: 20),
+          actions: [
+            IconButton(
+              tooltip: "Trash",
+              icon: const Icon(Icons.delete_outline),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const TrashScreen()),
                 );
               },
             ),
-          );
-        },
+            IconButton(
+              tooltip: "Log out",
+              icon: const Icon(Icons.logout_rounded),
+              onPressed: _confirmLogout,
+            ),
+          ],
+        ),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: _openUpload,
+          icon: const Icon(Icons.upload_file),
+          label: const Text("Upload"),
+        ),
+        body: FutureBuilder<void>(
+          future: _loadFuture,
+          builder: (_, snap) {
+            if (snap.connectionState == ConnectionState.waiting) {
+              return _loadingSkeleton();
+            }
+
+            return RefreshIndicator(
+              onRefresh: _refresh,
+              child: ListView.builder(
+                padding: const EdgeInsets.all(12),
+                itemCount: _files.length + 2,
+                itemBuilder: (_, i) {
+                  if (i == 0 && _quotaAvailable) {
+                    return StorageUsageCard(
+                      usedBytes: _usedBytes,
+                      limitBytes: _limitBytes,
+                    );
+                  }
+
+                  if (i == 1 && _showSwipeHint) {
+                    return Card(
+                      color: Colors.blueGrey.withOpacity(0.12),
+                      child: ListTile(
+                        leading:
+                            const Icon(Icons.swipe, color: Colors.white70),
+                        title: const Text("Swipe to delete"),
+                        subtitle: const Text(
+                          "Swipe a file left to remove it from your vault",
+                        ),
+                        trailing: IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () =>
+                              setState(() => _showSwipeHint = false),
+                        ),
+                      ),
+                    );
+                  }
+
+                  final index = i - 2;
+                  if (index < 0 || index >= _files.length) {
+                    return const SizedBox.shrink();
+                  }
+
+                  final f = _files[index];
+                  final name = f['filename'] as String;
+                  final size = (f['size'] as num).toInt();
+                  final color = _iconColor(name);
+
+                  return Dismissible(
+                    key: ValueKey(f['file_id']),
+                    direction: DismissDirection.endToStart,
+                    background: Container(
+                      alignment: Alignment.centerRight,
+                      padding: const EdgeInsets.only(right: 20),
+                      color: Colors.redAccent,
+                      child: const Icon(Icons.delete, color: Colors.white),
+                    ),
+                    onDismissed: (_) async {
+                      final removed = _files.removeAt(index);
+                      setState(() {});
+                      await ApiService.deleteFile(removed['file_id']);
+                    },
+                    child: Card(
+                      child: ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: color.withOpacity(0.15),
+                          child: Icon(_iconFor(name), color: color),
+                        ),
+                        title: Text(name, maxLines: 1),
+                        subtitle: Text(_formatSize(size)),
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => FilePreviewScreen(
+                                fileId: f['file_id'],
+                                filename: name,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  );
+                },
+              ),
+            );
+          },
+        ),
       ),
     );
   }

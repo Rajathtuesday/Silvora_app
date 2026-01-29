@@ -5,7 +5,7 @@ import '../state/secure_state.dart';
 
 class ApiClient {
   // IMPORTANT: use your PC's LAN IP and Django port
-  static final String baseUrl = SecureState.serverUrl;
+  static final String baseUrl = SecureState.serverBaseUrl;
 
   final Dio dio;
 

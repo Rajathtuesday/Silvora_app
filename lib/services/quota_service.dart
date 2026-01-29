@@ -30,7 +30,7 @@ import '../state/secure_state.dart';
 
 class QuotaService {
   static Future<({int used, int limit})> fetchQuota() async {
-    final url = "${SecureState.serverUrl}/upload/quota/";
+    final url = "${SecureState.serverBaseUrl}/upload/quota/";
 
     print("📡 [QUOTA] Requesting → $url");
     print("🔐 [QUOTA] Token present: ${SecureState.accessToken != null}");
