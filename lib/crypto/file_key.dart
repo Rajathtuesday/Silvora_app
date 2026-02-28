@@ -1,22 +1,45 @@
+// ============================================================================
+// File Key Derivation
+//
+// Derives a per-file encryption key from the master key.
+//
+// SECURITY CONTRACT:
+// - Deterministic
+// - Domain-separated
+// - Canonical encoding
+// - One key per file
+// ============================================================================
 
-// ========================================================================
-// lib/crypto/hkdf.dart
+import 'dart:convert';
 import 'dart:typed_data';
-import 'package:cryptography/cryptography.dart';
 
-Future<Uint8List> hkdfSha256({
-  required Uint8List ikm,
-  required List<int> info,
+import 'hkdf.dart';
+
+const int _fileKeyLength = 32;
+const String _fileKeyContext = "silvora:file-key:v1";
+
+Future<Uint8List> deriveFileKey({
+  required Uint8List masterKey,
+  required String fileId,
 }) async {
-  final hkdf = Hkdf(
-    hmac: Hmac.sha256(),
-    outputLength: 32,
+  if (fileId.isEmpty) {
+    throw ArgumentError("fileId must not be empty");
+  }
+
+  final Uint8List info = Uint8List.fromList(
+    utf8.encode("$_fileKeyContext:$fileId"),
   );
 
-  final key = await hkdf.deriveKey(
-    secretKey: SecretKey(ikm),
+  final Uint8List fileKey = await hkdfSha256(
+    ikm: masterKey,
     info: info,
+    length: _fileKeyLength,
   );
 
-  return Uint8List.fromList(await key.extractBytes());
+  if (fileKey.length != _fileKeyLength) {
+    throw StateError("Invalid file key length");
+  }
+
+  return fileKey;
 }
+

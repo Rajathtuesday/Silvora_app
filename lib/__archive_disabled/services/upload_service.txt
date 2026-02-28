@@ -1,0 +1,2034 @@
+// import 'dart:convert';
+// import 'dart:io';
+// import 'dart:math';
+// import 'dart:typed_data';
+
+// import 'package:crypto/crypto.dart' as crypto;
+// import 'package:cryptography/cryptography.dart';
+// import 'package:http/http.dart' as http;
+
+// import '../state/secure_state.dart';
+
+// /// ---------- Helpers: hex → bytes ----------
+// Uint8List hexToBytes(String hex) {
+//   final clean = hex.trim();
+//   if (clean.length % 2 != 0) {
+//     throw ArgumentError('Hex string must have even length');
+//   }
+//   final result = Uint8List(clean.length ~/ 2);
+//   for (var i = 0; i < clean.length; i += 2) {
+//     final byteStr = clean.substring(i, i + 2);
+//     result[i ~/ 2] = int.parse(byteStr, radix: 16);
+//   }
+//   return result;
+// }
+
+// /// ---------- Helpers: HKDF-SHA256 (RFC5869 style) ----------
+// Uint8List hkdfSha256({
+//   required Uint8List ikm,
+//   required Uint8List salt,
+//   required Uint8List info,
+//   required int length,
+// }) {
+//   // Extract
+//   final hmacExtract =
+//       crypto.Hmac(crypto.sha256, salt).convert(ikm).bytes; // PRK
+//   final hashLen = 32;
+//   final n = (length + hashLen - 1) ~/ hashLen;
+
+//   // Expand
+//   final okm = <int>[];
+//   var previous = <int>[];
+
+//   for (var i = 1; i <= n; i++) {
+//     final hmac = crypto.Hmac(crypto.sha256, hmacExtract);
+//     final input = <int>[]
+//       ..addAll(previous)
+//       ..addAll(info)
+//       ..add(i); // counter
+//     previous = hmac.convert(Uint8List.fromList(input)).bytes;
+//     okm.addAll(previous);
+//   }
+
+//   return Uint8List.fromList(okm.sublist(0, length));
+// }
+
+// /// Service that uploads a file to Silvora using:
+// /// - XChaCha20-Poly1305 per-chunk encryption
+// /// - Same HKDF derivation as your Python script:
+// ///   salt = b"silvora_file_key"
+// ///   info = "chunk-{index}"
+// class UploadService {
+//   /// Encrypts and uploads [filePath] in chunks.
+//   ///
+//   /// [onProgress] is called with a value in [0.0, 1.0].
+//   ///
+//   /// Returns the upload_id on success, or null on failure.
+//   static Future<String?> uploadEncryptedFile({
+//     required String filePath,
+//     required String accessToken,
+//     int chunkSize = 256 * 1024, // 256 KB
+//     void Function(double progress)? onProgress,
+//   }) async {
+//     final server = SecureState.serverUrl;
+//     final file = File(filePath);
+
+//     if (!await file.exists()) {
+//       throw Exception("File not found: $filePath");
+//     }
+
+//     // --------- Load file into memory (OK for demo sizes) ----------
+//     final bytes = await file.readAsBytes();
+//     final fileSize = bytes.length;
+//     final fileName = filePath.split(Platform.pathSeparator).last;
+
+//     final totalChunks = (fileSize / chunkSize).ceil();
+
+//     // --------- Hard-coded master key (short-term demo mode) ------
+//     // IMPORTANT: this must match your Python test master key.
+//     final masterKey = hexToBytes(SecureState.hardcodedMasterKeyHex);
+//     final fileSalt = Uint8List.fromList(utf8.encode('silvora_file_key'));
+
+//     // --------- 1) START UPLOAD (POST /upload/start/) -------------
+//     final manifest = {
+//       "manifest_version": 1,
+//       "encryption": "XCHACHA20_POLY1305",
+//       "filename": fileName,
+//       "file_size": fileSize,
+//       "chunk_size": chunkSize,
+//       // server will fill "chunks" and "owner"
+//     };
+
+//     final startResp = await http.post(
+//       Uri.parse("$server/upload/start/"),
+//       headers: {
+//         "Authorization": "Bearer $accessToken",
+//         "Content-Type": "application/json",
+//       },
+//       body: jsonEncode({
+//         "filename": fileName,
+//         "size": fileSize,
+//         "chunk_size": chunkSize,
+//         "manifest": manifest,
+//       }),
+//     );
+
+//     if (startResp.statusCode != 200) {
+//       throw Exception(
+//           "Upload start failed: ${startResp.statusCode} ${startResp.body}");
+//     }
+
+//     final startJson = jsonDecode(startResp.body) as Map<String, dynamic>;
+//     final uploadId = startJson["upload_id"] as String;
+//     // print("[DART] upload_id = $uploadId");
+
+//     // --------- 2) Encrypt + upload each chunk --------------------
+//     final cryptoApi = Cryptography.instance;
+//     final algo = cryptoApi.xchacha20Poly1305Aead();
+
+//     for (var index = 0; index < totalChunks; index++) {
+//       final start = index * chunkSize;
+//       final end = min(start + chunkSize, fileSize);
+//       final plainChunk = bytes.sublist(start, end);
+
+//       // HKDF: derive per-chunk key from masterKey
+//       final chunkKey = hkdfSha256(
+//         ikm: masterKey,
+//         salt: fileSalt,
+//         info: Uint8List.fromList(utf8.encode("chunk-$index")),
+//         length: 32,
+//       );
+
+//       final secretKey = SecretKey(chunkKey);
+
+//       // 24-byte XChaCha20 nonce
+//       // final nonceBytes = cryptoApi.newNonce(length: 24);
+//       final nonceBytes = algo.newNonce();
+
+//       // AEAD encrypt
+//       final secretBox = await algo.encrypt(
+//         plainChunk,
+//         secretKey: secretKey,
+//         nonce: nonceBytes,
+//       );
+
+//       // libsodium-style: ciphertext = cipherText || mac
+//       final cipherForServer = Uint8List.fromList(
+//         <int>[...secretBox.cipherText, ...secretBox.mac.bytes],
+//       );
+
+//       final nonceB64 = base64Encode(nonceBytes);
+//       final sha = crypto.sha256.convert(cipherForServer).toString();
+
+//       // PUT /upload/chunk/<upload_id>/<index>/
+//       final putUrl = Uri.parse("$server/upload/chunk/$uploadId/$index/");
+//       final putResp = await http.put(
+//         putUrl,
+//         headers: {
+//           "Authorization": "Bearer $accessToken",
+//           "X-Chunk-Nonce": nonceB64,
+//           "X-Chunk-Ciphertext-Sha256": sha,
+//         },
+//         body: cipherForServer,
+//       );
+
+//       if (putResp.statusCode != 200) {
+//         throw Exception(
+//             "Chunk $index upload failed: ${putResp.statusCode} ${putResp.body}");
+//       }
+
+//       // progress callback
+//       if (onProgress != null) {
+//         onProgress((index + 1) / totalChunks);
+//       }
+//     }
+
+//     // --------- 3) FINISH (POST /upload/finish/<upload_id>/) ------
+//     final finishResp = await http.post(
+//       Uri.parse("$server/upload/finish/$uploadId/"),
+//       headers: {
+//         "Authorization": "Bearer $accessToken",
+//       },
+//     );
+
+//     if (finishResp.statusCode != 200) {
+//       throw Exception(
+//           "Finish upload failed: ${finishResp.statusCode} ${finishResp.body}");
+//     }
+
+//     // print("[DART] finish_upload response: ${finishResp.body}");
+//     return uploadId;
+//   }
+// }
+
+
+
+
+
+
+
+// --------------------------------------------version 2--------------------------------------
+// // lib/services/upload_service.dart
+
+// import 'dart:io';
+// import 'dart:convert';
+// import 'dart:typed_data';
+// import 'package:http/http.dart' as http;
+// import 'package:crypto/crypto.dart' as crypto;
+// import 'package:sodium/sodium.dart';
+// import '../state/secure_state.dart';
+
+// class UploadService {
+//   // static final sodium = SodiumInit.init();
+
+//   static Uint8List hexToBytes(String hex) {
+//     final clean = hex.replaceAll(" ", "").trim();
+//     return Uint8List.fromList(
+//       List.generate(clean.length ~/ 2,
+//           (i) => int.parse(clean.substring(i * 2, i * 2 + 2), radix: 16)),
+//     );
+//   }
+
+//   static Future<bool> uploadEncryptedFile(File file, Uint8List encrypted,
+//       void Function(double) onProgress, dynamic sodium) async {
+//     final access = SecureState.accessToken;
+//     if (access == null) return false;
+
+//     final server = SecureState.serverUrl;
+//     final filename = file.path.split("/").last;
+//     final fileSize = await file.length();
+//     const chunkSize = 256 * 1024;
+//     final totalChunks = (fileSize / chunkSize).ceil();
+
+//     final masterKey = hexToBytes(SecureState.hardcodedMasterKeyHex);
+
+//     // Create upload session
+//     final startResp = await http.post(
+//       Uri.parse("$server/upload/start/"),
+//       headers: {
+//         ...SecureState.authHeader(),
+//         "Content-Type": "application/json",
+//       },
+//       body: jsonEncode({
+//         "filename": filename,
+//         "size": fileSize,
+//         "chunk_size": chunkSize,
+//       }),
+//     );
+
+//     if (startResp.statusCode != 200) return false;
+//     final uploadId = jsonDecode(startResp.body)["upload_id"];
+
+//     final raf = file.openSync();
+
+//     for (int i = 0; i < totalChunks; i++) {
+//       final start = i * chunkSize;
+//       final end = (start + chunkSize).clamp(0, fileSize);
+//       final chunk = raf.readSync(end - start);
+
+//       // Generate per-chunk key using HKDF
+//       final chunkKey = crypto.Hmac(crypto.sha256, masterKey)
+//           .convert(utf8.encode("chunk-$i"))
+//           .bytes;
+
+//       // Random XChaCha nonce (24 bytes)
+//       final nonce = sodium.randombytes.buf(24);
+
+//       final secretBox = sodium.crypto.secretBox.easy(
+//         message: chunk,
+//         nonce: nonce,
+//         key: Uint8List.fromList(chunkKey),
+//       );
+
+//       final ciphertext = secretBox.cipherText;
+
+//       final sha = crypto.sha256.convert(ciphertext).toString();
+
+//       final resp = await http.put(
+//         Uri.parse("$server/upload/chunk/$uploadId/$i/"),
+//         headers: {
+//           ...SecureState.authHeader(),
+//           "X-Chunk-Nonce": base64Encode(nonce),
+//           "X-Chunk-Ciphertext-Sha256": sha,
+//         },
+//         body: ciphertext,
+//       );
+
+//       if (resp.statusCode != 200) {
+//         raf.closeSync();
+//         return false;
+//       }
+
+//       onProgress((i + 1) / totalChunks);
+//     }
+
+//     raf.closeSync();
+
+//     final finishResp = await http.post(
+//       Uri.parse("$server/upload/finish/$uploadId/"),
+//       headers: SecureState.authHeader(),
+//     );
+
+//     return finishResp.statusCode == 200;
+//   }
+// }
+// -----------------------version 3-----------------------------------------------------
+
+
+// lib/services/upload_service.dart
+
+// import 'dart:io';
+// import 'dart:typed_data';
+// import 'package:http/http.dart' as http;
+
+// class UploadService {
+//   // TODO: change to your actual API endpoint.
+//   static const String _uploadChunkUrl =
+//       'https://your-backend.example.com/api/upload_chunk';
+
+//   /// Upload a single encrypted chunk.
+//   ///
+//   /// [file]        – original local file (only used for name / id here).
+//   /// [cipherChunk] – encrypted bytes for this chunk (pure E2EE: no plaintext).
+//   /// [chunkIndex]  – 0-based index of this chunk in the file.
+//   static Future<bool> uploadEncryptedFile(
+//     File file,
+//     Uint8List cipherChunk,
+//     int chunkIndex,
+//   ) async {
+//     try {
+//       final fileName = file.uri.pathSegments.isNotEmpty
+//           ? file.uri.pathSegments.last
+//           : 'file.bin';
+
+//       // You probably also want some upload/session id and totalChunks.
+//       final request = http.MultipartRequest(
+//         'POST',
+//         Uri.parse(_uploadChunkUrl),
+//       )
+//         ..fields['fileName'] = fileName
+//         ..fields['chunkIndex'] = chunkIndex.toString()
+//         // You can add a client-generated fileId so server can reassemble.
+//         // ..fields['fileId'] = fileId,
+//         ..files.add(
+//           http.MultipartFile.fromBytes(
+//             'chunk',
+//             cipherChunk,
+//             filename: '$fileName.$chunkIndex.encpart',
+//           ),
+//         );
+
+//       final response = await request.send();
+//       final status = response.statusCode;
+
+//       // Adjust this according to your backend's success code.
+//       return status >= 200 && status < 300;
+//     } catch (e) {
+//       // For debugging you may want to log e
+//       return false;
+//     }
+//   }
+// }
+
+//////////////////////////////////////////////////
+///
+///
+///
+// lib/services/upload_service.dart
+
+// import 'dart:typed_data';
+// import 'package:http/http.dart' as http;
+// import 'package:silvora_app/state/secure_state.dart';
+// import 'dart:convert';
+
+// class UploadService {
+//   static Future<bool> uploadEncryptedChunk({
+//     required String fileName,
+//     required int chunkIndex,
+//     required int totalChunks,
+//     required Uint8List chunkData,
+//     required Uint8List nonce,
+//     required Uint8List mac,
+//   }) async {
+//     try {
+//       final url = Uri.parse("${SecureState.serverUrl}/api/upload/chunk/");
+
+//       final request = http.MultipartRequest("POST", url);
+
+//       // Required metadata
+//       request.fields["filename"] = fileName;
+//       request.fields["chunk_index"] = chunkIndex.toString();
+//       request.fields["total_chunks"] = totalChunks.toString();
+
+//       // Base64 encode nonce and MAC
+//       request.fields["nonce"] = base64Encode(nonce);
+//       request.fields["mac"] = base64Encode(mac);
+
+//       // Binary chunk data
+//       request.files.add(
+//         http.MultipartFile.fromBytes(
+//           "chunk",
+//           chunkData,
+//           filename: "$fileName.$chunkIndex.enc",
+//         ),
+//       );
+
+//       // Auth: Bearer token
+//       request.headers["Authorization"] =
+//           "Bearer ${SecureState.accessToken}";
+
+//       final response = await request.send();
+
+//       return response.statusCode >= 200 && response.statusCode < 300;
+//     } catch (e) {
+//       print("Upload error: $e");
+//       return false;
+//     }
+//   }
+// }
+// ----------------------------------------------------------------------------
+// // lib/services/upload_service.dart
+// import 'dart:convert';
+// import 'dart:typed_data';
+
+// import 'package:http/http.dart' as http;
+// import 'package:crypto/crypto.dart';
+
+// import '../state/secure_state.dart';
+
+// class UploadService {
+//   /// 1) Tell Django we are starting an upload session.
+//   /// Returns upload_id on success, or null on failure.
+//   static Future<String?> startUpload({
+//     required String filename,
+//     required int fileSize,
+//     required int chunkSize,
+//   }) async {
+//     final url = Uri.parse("${SecureState.serverUrl}/upload/start/");
+
+//     try {
+//       final resp = await http.post(
+//         url,
+//         headers: {
+//           "Authorization": "Bearer ${SecureState.accessToken}",
+//           "Content-Type": "application/json",
+//         },
+//         body: jsonEncode({
+//           "filename": filename,
+//           "size": fileSize,
+//           "chunk_size": chunkSize,
+//           "manifest": {
+//             "manifest_version": 1,
+//             "encryption": "xchacha", // matches your backend
+//           },
+//         }),
+//       );
+
+//       if (resp.statusCode == 200) {
+//         final data = jsonDecode(resp.body);
+//         return data["upload_id"] as String?;
+//       } else {
+//         print("startUpload failed: ${resp.statusCode} ${resp.body}");
+//         return null;
+//       }
+//     } catch (e) {
+//       print("startUpload exception: $e");
+//       return null;
+//     }
+//   }
+
+//   /// 2) Upload a single encrypted chunk to:
+//   ///    PUT /upload/chunk/<upload_id>/<index>/
+//   static Future<bool> uploadChunk({
+//   required String uploadId,
+//   required Uint8List cipherChunk,
+//   required Uint8List nonce,
+//   required Uint8List mac,        // ✅ NEW
+//   required int chunkIndex,
+// }) async {
+//   final url = Uri.parse(
+//     "${SecureState.serverUrl}/upload/chunk/$uploadId/$chunkIndex/",
+//   );
+
+//   try {
+//     final sha = sha256.convert(cipherChunk).toString();
+
+//     final resp = await http.put(
+//       url,
+//       headers: {
+//         "Authorization": "Bearer ${SecureState.accessToken}",
+//         "X-Chunk-Nonce": base64Encode(nonce),
+//         "X-Chunk-Ciphertext-Sha256": sha,
+//         "X-Chunk-Mac-B64": base64Encode(mac),   // ✅ NEW HEADER
+//       },
+//       body: cipherChunk,
+//     );
+
+//     if (resp.statusCode == 200) {
+//       return true;
+//     } else {
+//       print(
+//           "uploadChunk failed [idx=$chunkIndex]: ${resp.statusCode} ${resp.body}");
+//       return false;
+//     }
+//   } catch (e) {
+//     print("uploadChunk exception [idx=$chunkIndex]: $e");
+//     return false;
+//   }
+// }
+
+//   /// 3) Tell Django to verify manifest & assemble final.bin
+//   static Future<bool> finishUpload({
+//     required String uploadId,
+//   }) async {
+//     final url = Uri.parse(
+//       "${SecureState.serverUrl}/upload/finish/$uploadId/",
+//     );
+
+//     try {
+//       final resp = await http.post(
+//         url,
+//         headers: {
+//           "Authorization": "Bearer ${SecureState.accessToken}",
+//         },
+//       );
+
+//       if (resp.statusCode == 200) {
+//         return true;
+//       } else {
+//         print("finishUpload failed: ${resp.statusCode} ${resp.body}");
+//         return false;
+//       }
+//     } catch (e) {
+//       print("finishUpload exception: $e");
+//       return false;
+//     }
+//   }
+// }
+// -------------------------------------------------------------------------------------
+
+
+// import 'dart:convert';
+// import 'dart:typed_data';
+
+// import 'package:http/http.dart' as http;
+// import 'package:crypto/crypto.dart';
+
+// import '../state/secure_state.dart';
+
+// class UploadService {
+//   /// Start an upload session → Django creates manifest + upload_id
+//   static Future<String?> startUpload({
+//     required String filename,
+//     required int fileSize,
+//     required int chunkSize,
+//   }) async {
+//     final url = Uri.parse("${SecureState.serverUrl}/upload/start/");
+
+//     try {
+//       final resp = await http.post(
+//         url,
+//         headers: {
+//           "Authorization": "Bearer ${SecureState.accessToken}",
+//           "Content-Type": "application/json",
+//         },
+//         body: jsonEncode({
+//           "filename": filename,
+//           "size": fileSize,
+//           "chunk_size": chunkSize,
+//           "manifest": {
+//             "manifest_version": 1,
+//             "encryption": "xchacha",
+//           },
+//         }),
+//       );
+
+//       if (resp.statusCode == 200) {
+//         final data = jsonDecode(resp.body);
+//         return data["upload_id"] as String?;
+//       }
+
+//       print("startUpload failed: ${resp.statusCode} ${resp.body}");
+//       return null;
+//     } catch (e) {
+//       print("startUpload exception: $e");
+//       return null;
+//     }
+//   }
+
+//   /// Upload encrypted chunk → PUT /upload/chunk/<upload_id>/<index>/
+// static Future<bool> uploadChunk({
+//   required String uploadId,
+//   required Uint8List cipherChunk,
+//   required Uint8List nonce,
+//   required Uint8List mac,
+//   required int chunkIndex,
+// }) async {
+//   final url = Uri.parse(
+//       "${SecureState.serverUrl}/upload/chunk/$uploadId/$chunkIndex/");
+
+//   try {
+//     final sha = sha256.convert(cipherChunk).toString();
+
+//     final request = http.MultipartRequest('POST', url)
+//       ..headers.addAll({
+//         "Authorization": "Bearer ${SecureState.accessToken}",
+//         "X-Chunk-Nonce": base64Encode(nonce),
+//         "X-Chunk-Ciphertext-Sha256": sha,
+//         "X-Chunk-Mac-B64": base64Encode(mac),
+//       })
+//       ..files.add(
+//         http.MultipartFile.fromBytes(
+//           'chunk',
+//           cipherChunk,
+//           filename: 'chunk_$chunkIndex.enc',
+//         ),
+//       );
+
+//     final resp = await request.send();
+//     final status = resp.statusCode;
+//     final body = await resp.stream.bytesToString();
+
+//     if (status == 200) return true;
+
+//     print("⚠️ uploadChunk failed [$chunkIndex]: $status $body");
+//     return false;
+
+//   } catch (e) {
+//     print("❌ uploadChunk exception [$chunkIndex]: $e");
+//     return false;
+//   }
+// }
+//   /// Finalize → server assembles final.bin + DB entry
+//   static Future<bool> finishUpload({
+//     required String uploadId,
+//   }) async {
+//     final url =
+//         Uri.parse("${SecureState.serverUrl}/upload/finish/$uploadId/");
+
+//     try {
+//       final resp = await http.post(
+//         url,
+//         headers: {
+//           "Authorization": "Bearer ${SecureState.accessToken}",
+//         },
+//       );
+
+//       if (resp.statusCode == 200) {
+//         return true;
+//       }
+
+//       print("finishUpload failed: ${resp.statusCode} ${resp.body}");
+//       return false;
+//     } catch (e) {
+//       print("finishUpload exception: $e");
+//       return false;
+//     }
+//   }
+// }
+// -----------------------------------------------for updated mvp----------------------
+
+
+// // lib/screens/upload/upload_screen.dart
+// import 'dart:io';
+// import 'dart:typed_data';
+
+// import 'package:file_picker/file_picker.dart';
+// import 'package:flutter/material.dart';
+// import 'package:flutter/foundation.dart';        // ✅ for compute()
+// import 'package:cryptography/cryptography.dart';
+// import 'package:path/path.dart' as p;
+
+// import '../../services/upload_service.dart';
+// import '../../state/secure_state.dart';
+// import '../files/file_list_screen.dart';
+
+// class UploadScreen extends StatefulWidget {
+//   const UploadScreen({super.key});
+
+//   @override
+//   State<UploadScreen> createState() => _UploadScreenState();
+// }
+
+// class _UploadScreenState extends State<UploadScreen> {
+//   File? selectedFile;
+//   double uploadProgress = 0.0;
+//   bool isUploading = false;
+
+//   // ✅ 2 MB chunks (MVP, but supports large files later)
+//   static const int chunkSize = 2 * 1024 * 1024; // 2 MB
+
+//   // TEMP: all-zero key, replace with real per-file key later
+//   Uint8List _fakeKey() => Uint8List(32);
+
+//   Future<void> pickFile() async {
+//     final result = await FilePicker.platform.pickFiles();
+//     if (result != null && result.files.single.path != null) {
+//       setState(() {
+//         selectedFile = File(result.files.single.path!);
+//       });
+//     }
+//   }
+
+//   Future<void> startUpload() async {
+//     if (selectedFile == null) return;
+
+//     final file = selectedFile!;
+//     final fileLen = await file.length();
+//     final filename = p.basename(file.path);
+
+//     setState(() {
+//       isUploading = true;
+//       uploadProgress = 0.0;
+//     });
+
+//     // 1️⃣ Start upload session on backend
+//     final uploadId = await UploadService.startUpload(
+//       filename: filename,
+//       fileSize: fileLen,
+//       chunkSize: chunkSize,
+//     );
+
+//     if (uploadId == null) {
+//       setState(() => isUploading = false);
+//       _toast("❌ Could not start upload session");
+//       return;
+//     }
+
+//     final raf = await file.open();
+//     final totalChunks = (fileLen / chunkSize).ceil();
+//     final keyBytes = _fakeKey();
+
+//     try {
+//       for (int chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+//         final start = chunkIndex * chunkSize;
+//         final length =
+//             (start + chunkSize > fileLen) ? (fileLen - start) : chunkSize;
+
+//         await raf.setPosition(start);
+//         final plainChunk = await raf.read(length);
+
+//         // 2️⃣ Encrypt chunk off the UI thread using compute()
+//         final result = await compute<Map<String, dynamic>, Map<String, Uint8List>>(
+//           _encryptChunkIsolate,
+//           {
+//             "plain": plainChunk,
+//             "key": keyBytes,
+//           },
+//         );
+
+//         final cipherChunk = result["cipher"]!;
+//         final nonceBytes = result["nonce"]!;
+//         final macBytes = result["mac"]!;
+
+//         // 3️⃣ Upload encrypted chunk (network, but not CPU-heavy)
+//         final ok = await UploadService.uploadChunk(
+//           uploadId: uploadId,
+//           cipherChunk: cipherChunk,
+//           nonce: nonceBytes,
+//           mac: macBytes,
+//           chunkIndex: chunkIndex,
+//         );
+
+//         if (!ok) {
+//           setState(() => isUploading = false);
+//           _toast("❌ Upload failed at chunk $chunkIndex");
+//           return;
+//         }
+
+//         setState(() {
+//           uploadProgress = (chunkIndex + 1) / totalChunks;
+//         });
+//       }
+//     } finally {
+//       await raf.close();
+//     }
+
+//     // 4️⃣ Tell backend to assemble final.bin
+//     final finished = await UploadService.finishUpload(uploadId: uploadId);
+//     setState(() => isUploading = false);
+
+//     if (!finished) {
+//       _toast("⚠️ Upload finished, but assembly failed");
+//       return;
+//     }
+
+//     _toast("✅ Upload complete");
+
+//     if (!mounted) return;
+//     Navigator.pushReplacement(
+//       context,
+//       MaterialPageRoute(
+//         builder: (_) =>
+//             FileListScreen(accessToken: SecureState.accessToken!),
+//       ),
+//     );
+//   }
+
+//   void _toast(String msg) {
+//     ScaffoldMessenger.of(context)
+//         .showSnackBar(SnackBar(content: Text(msg)));
+//   }
+
+//   @override
+//   Widget build(BuildContext context) {
+//     final fileName = selectedFile != null
+//         ? p.basename(selectedFile!.path)
+//         : "No file selected";
+
+//     return Scaffold(
+//       appBar: AppBar(title: const Text("Upload File")),
+//       body: Padding(
+//         padding: const EdgeInsets.all(20),
+//         child: Column(
+//           crossAxisAlignment: CrossAxisAlignment.center,
+//           children: [
+//             ElevatedButton(
+//               onPressed: isUploading ? null : pickFile,
+//               child: const Text("Pick File"),
+//             ),
+//             const SizedBox(height: 12),
+//             Text(fileName),
+//             const SizedBox(height: 20),
+
+//             if (isUploading) ...[
+//               LinearProgressIndicator(value: uploadProgress),
+//               const SizedBox(height: 8),
+//               Text(
+//                 "${(uploadProgress * 100).toStringAsFixed(0)}%",
+//                 style: const TextStyle(fontSize: 12),
+//               ),
+//             ],
+
+//             const SizedBox(height: 10),
+//             ElevatedButton(
+//               onPressed:
+//                   isUploading || selectedFile == null ? null : startUpload,
+//               child: Text(isUploading ? "Uploading..." : "Upload Securely"),
+//             ),
+//           ],
+//         ),
+//       ),
+//     );
+//   }
+// }
+
+// /// Top-level function used by `compute()`
+// /// Takes: { "plain": Uint8List, "key": Uint8List }
+// /// Returns: { "cipher": Uint8List, "nonce": Uint8List, "mac": Uint8List }
+// Future<Map<String, Uint8List>> _encryptChunkIsolate(
+//     Map<String, dynamic> args) async {
+//   final plain = args["plain"] as Uint8List;
+//   final keyBytes = args["key"] as Uint8List;
+
+//   final algorithm = Xchacha20.poly1305Aead();
+//   final secretKey = SecretKey(keyBytes);
+//   final nonce = await algorithm.newNonce();
+
+//   final secretBox = await algorithm.encrypt(
+//     plain,
+//     secretKey: secretKey,
+//     nonce: nonce,
+//   );
+
+//   return {
+//     "cipher": Uint8List.fromList(secretBox.cipherText),
+//     "nonce": Uint8List.fromList(nonce),
+//     "mac": Uint8List.fromList(secretBox.mac.bytes),
+//   };
+// }
+
+
+// ------------------------------------------------------------------
+
+
+
+// lib/services/upload_service.dart
+
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:http/http.dart' as http;
+import 'package:crypto/crypto.dart';
+
+import '../../state/secure_state.dart';
+
+class UploadService {
+  /// Start upload session
+  static Future<String?> startUpload({
+    required String filename,
+    required int fileSize,
+    required int chunkSize,
+  }) async {
+    final url = Uri.parse("${SecureState.serverUrl}/upload/start/");
+
+    try {
+      final resp = await http.post(
+        url,
+        headers: {
+          "Authorization": "Bearer ${SecureState.accessToken}",
+          "Content-Type": "application/json",
+        },
+        body: jsonEncode({
+          "filename": filename,
+          "size": fileSize,
+          "chunk_size": chunkSize,
+          "manifest": {
+            "manifest_version": 1,
+            "encryption": "xchacha",
+          },
+        }),
+      );
+
+      if (resp.statusCode == 200) {
+        return jsonDecode(resp.body)["upload_id"];
+      }
+
+      print("startUpload failed: ${resp.statusCode} ${resp.body}");
+      return null;
+    } catch (e) {
+      print("startUpload exception: $e");
+      return null;
+    }
+  }
+
+  /// Upload encrypted chunk (stream-friendly raw PUT)
+  static Future<bool> uploadChunk({
+    required String uploadId,
+    required Uint8List cipherChunk,
+    required Uint8List nonce,
+    required Uint8List mac,
+    required int chunkIndex,
+  }) async {
+    final url = Uri.parse(
+        "${SecureState.serverUrl}/upload/chunk/$uploadId/$chunkIndex/");
+
+    try {
+      final sha = sha256.convert(cipherChunk).toString();
+
+      final resp = await http.put(
+        url,
+        headers: {
+          "Authorization": "Bearer ${SecureState.accessToken}",
+          "Content-Type": "application/octet-stream",
+          "X-Chunk-Nonce": base64Encode(nonce),
+          "X-Chunk-Ciphertext-Sha256": sha,
+          "X-Chunk-Mac-B64": base64Encode(mac),
+        },
+        body: cipherChunk,
+      );
+
+      if (resp.statusCode == 200) return true;
+
+      print("uploadChunk failed [$chunkIndex]: ${resp.statusCode} ${resp.body}");
+      return false;
+    } catch (e) {
+      print("uploadChunk exception [$chunkIndex]: $e");
+      return false;
+    }
+  }
+
+  /// Finalize upload session → merge chunks
+  static Future<bool> finishUpload(String uploadId) async {
+    final url = Uri.parse("${SecureState.serverUrl}/upload/finish/$uploadId/");
+
+    try {
+      final resp = await http.post(
+        url,
+        headers: {
+          "Authorization": "Bearer ${SecureState.accessToken}",
+        },
+      );
+
+      if (resp.statusCode == 200) return true;
+
+      print("finishUpload failed: ${resp.statusCode} ${resp.body}");
+      return false;
+    } catch (e) {
+      print("finishUpload exception: $e");
+      return false;
+    }
+  }
+}
+
+
+--------------------------------------------------------------------------
+
+// lib/services/upload_service.dart
+
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:http/http.dart' as http;
+import 'package:crypto/crypto.dart';
+
+import '../../state/secure_state.dart';
+
+class UploadService {
+  /// Start upload session
+  static Future<String?> startUpload({
+    required String filename,
+    required int fileSize,
+    required int chunkSize,
+  }) async {
+    final url = Uri.parse("${SecureState.serverUrl}/upload/start/");
+
+    try {
+      final resp = await http.post(
+        url,
+        headers: {
+          "Authorization": "Bearer ${SecureState.accessToken}",
+          "Content-Type": "application/json",
+        },
+        body: jsonEncode({
+          "filename": filename,
+          "size": fileSize,
+          "chunk_size": chunkSize,
+          "manifest": {
+            "manifest_version": 1,
+            "encryption": "xchacha",
+          },
+        }),
+      );
+
+      if (resp.statusCode == 200) {
+        return jsonDecode(resp.body)["upload_id"];
+      }
+
+      print("startUpload failed: ${resp.statusCode} ${resp.body}");
+      return null;
+    } catch (e) {
+      print("startUpload exception: $e");
+      return null;
+    }
+  }
+
+  /// Upload encrypted chunk (stream-friendly raw PUT)
+  static Future<bool> uploadChunk({
+    required String uploadId,
+    required Uint8List cipherChunk,
+    required Uint8List nonce,
+    required Uint8List mac,
+    required int chunkIndex,
+  }) async {
+    final url = Uri.parse(
+        "${SecureState.serverUrl}/upload/chunk/$uploadId/$chunkIndex/");
+
+    try {
+      final sha = sha256.convert(cipherChunk).toString();
+
+      final resp = await http.put(
+        url,
+        headers: {
+          "Authorization": "Bearer ${SecureState.accessToken}",
+          "Content-Type": "application/octet-stream",
+          "X-Chunk-Nonce": base64Encode(nonce),
+          "X-Chunk-Ciphertext-Sha256": sha,
+          "X-Chunk-Mac-B64": base64Encode(mac),
+        },
+        body: cipherChunk,
+      );
+
+      if (resp.statusCode == 200) return true;
+
+      print("uploadChunk failed [$chunkIndex]: ${resp.statusCode} ${resp.body}");
+      return false;
+    } catch (e) {
+      print("uploadChunk exception [$chunkIndex]: $e");
+      return false;
+    }
+  }
+
+  /// Finalize upload session → merge chunks
+  static Future<bool> finishUpload(String uploadId) async {
+    final url = Uri.parse("${SecureState.serverUrl}/upload/finish/$uploadId/");
+
+    try {
+      final resp = await http.post(
+        url,
+        headers: {
+          "Authorization": "Bearer ${SecureState.accessToken}",
+        },
+      );
+
+      if (resp.statusCode == 200) return true;
+
+      print("finishUpload failed: ${resp.statusCode} ${resp.body}");
+      return false;
+    } catch (e) {
+      print("finishUpload exception: $e");
+      return false;
+    }
+  }
+}
+
+
+----------------------------------------------------------------------------
+
+
+
+
+
+// // lib/services/upload_service.dart
+// import 'dart:convert';
+// import 'dart:typed_data';
+
+// import 'package:crypto/crypto.dart';
+// import 'package:http/http.dart' as http;
+
+// import '../state/secure_state.dart';
+
+// /// Handles talking to the Django upload API:
+// /// - POST /upload/start/
+// /// - POST /upload/chunk/<upload_id>/<index>/
+// /// - POST /upload/finish/<upload_id>/
+// class UploadService {
+//   /// Start an upload session → Django creates upload_id + manifest.
+//   ///
+//   /// Returns the `upload_id` string on success, or `null` on failure.
+//   static Future<String?> startUpload({
+//     required String filename,
+//     required int fileSize,
+//     required int chunkSize,
+//   }) async {
+//     final url = Uri.parse('${SecureState.serverUrl}/upload/start/');
+
+//     try {
+//       final resp = await http.post(
+//         url,
+//         headers: {
+//           ...SecureState.authHeader(),
+//           'Content-Type': 'application/json',
+//         },
+//         body: jsonEncode({
+//           'filename': filename,
+//           'size': fileSize,
+//           'chunk_size': chunkSize,
+//           'manifest': {
+//             'manifest_version': 1,
+//             'encryption': 'xchacha', // matches your Django manifest
+//           },
+//         }),
+//       );
+
+//       if (resp.statusCode == 200) {
+//         final data = jsonDecode(resp.body);
+//         return data['upload_id'] as String?;
+//       } else {
+//         // For now, just log. Later: surface to UI via a toast service.
+//         print('startUpload failed: ${resp.statusCode} ${resp.body}');
+//         return null;
+//       }
+//     } catch (e) {
+//       print('startUpload exception: $e');
+//       return null;
+//     }
+//   }
+
+//   /// Upload a single *encrypted* chunk.
+//   ///
+//   /// Backend endpoint:
+//   ///   POST /upload/chunk/<upload_id>/<index>/
+//   ///
+//   /// Form-data:
+//   ///   - chunk : binary encrypted data
+//   ///
+//   /// Headers:
+//   ///   - X-Chunk-Nonce : base64(24 bytes)
+//   ///   - X-Chunk-Ciphertext-Sha256 : hex
+//   ///   - X-Chunk-Mac-B64 : base64(16 bytes)
+//   static Future<bool> uploadChunk({
+//     required String uploadId,
+//     required int chunkIndex,
+//     required Uint8List cipherChunk,
+//     required Uint8List nonce,
+//     required Uint8List mac,
+//   }) async {
+//     final url = Uri.parse(
+//       '${SecureState.serverUrl}/upload/chunk/$uploadId/$chunkIndex/',
+//     );
+
+//     try {
+//       final sha = sha256.convert(cipherChunk).toString();
+
+//       final request = http.MultipartRequest('POST', url)
+//         ..headers.addAll({
+//           ...SecureState.authHeader(),
+//           'X-Chunk-Nonce': base64Encode(nonce),
+//           'X-Chunk-Ciphertext-Sha256': sha,
+//           'X-Chunk-Mac-B64': base64Encode(mac),
+//         })
+//         ..files.add(
+//           http.MultipartFile.fromBytes(
+//             'chunk',
+//             cipherChunk,
+//             filename: 'chunk_$chunkIndex.enc',
+//           ),
+//         );
+
+//       final streamed = await request.send();
+//       final status = streamed.statusCode;
+//       final body = await streamed.stream.bytesToString();
+
+//       if (status == 200) {
+//         return true;
+//       }
+
+//       print('uploadChunk failed [$chunkIndex]: $status $body');
+//       return false;
+//     } catch (e) {
+//       print('uploadChunk exception [$chunkIndex]: $e');
+//       return false;
+//     }
+//   }
+
+//   /// Tell Django to verify manifest + assemble final.bin + create FileRecord.
+//   ///
+//   /// Backend endpoint:
+//   ///   POST /upload/finish/<upload_id>/
+//   static Future<bool> finishUpload({required String uploadId}) async {
+//     final url = Uri.parse(
+//       '${SecureState.serverUrl}/upload/finish/$uploadId/',
+//     );
+
+//     try {
+//       final resp = await http.post(
+//         url,
+//         headers: {
+//           ...SecureState.authHeader(),
+//         },
+//       );
+
+//       if (resp.statusCode == 200) {
+//         return true;
+//       }
+
+//       print('finishUpload failed: ${resp.statusCode} ${resp.body}');
+//       return false;
+//     } catch (e) {
+//       print('finishUpload exception: $e');
+//       return false;
+//     }
+//   }
+// }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// -*******************************************************-
+
+// // lib/services/upload_service.dart
+// import 'dart:typed_data';
+// import 'dart:convert';
+// import 'package:crypto/crypto.dart';
+// import 'package:http/http.dart' as http;
+
+// import '../state/secure_state.dart';
+
+// class UploadService {
+//   static String get _baseUrl => SecureState.serverUrl;
+
+//   static Map<String, String> _authHeaders() => {
+//         "Authorization": "Bearer ${SecureState.accessToken}",
+//       };
+
+//   /// 1️⃣ Start upload session → returns upload_id
+//   static Future<String?> startUpload({
+//     required String filename,
+//     required int fileSize,
+//     required int chunkSize,
+//   }) async {
+//     final url = Uri.parse("$_baseUrl/upload/start/");
+
+//     final body = jsonEncode({
+//       "filename": filename,
+//       "size": fileSize,
+//       "chunk_size": chunkSize,
+//       "manifest": {"encryption": "xchacha20-poly1305"}, // MVP placeholder
+//     });
+
+//     final res = await http.post(
+//       url,
+//       headers: {
+//         ..._authHeaders(),
+//         "Content-Type": "application/json",
+//       },
+//       body: body,
+//     );
+
+//     if (res.statusCode != 200) {
+//       print("❌ start upload failed: ${res.body}");
+//       return null;
+//     }
+
+//     return jsonDecode(res.body)["upload_id"];
+//   }
+
+//   /// 2️⃣ Upload a single encrypted chunk
+//   static Future<bool> uploadChunk({
+//     required String uploadId,
+//     required int chunkIndex,
+//     required Uint8List cipherChunk,
+//     required Uint8List nonce,
+//     required Uint8List mac,
+//   }) async {
+//     final url = Uri.parse("$_baseUrl/upload/chunk/$uploadId/$chunkIndex/");
+
+//     final req = http.MultipartRequest("POST", url);
+//     req.headers.addAll(_authHeaders());
+
+//     req.files.add(
+//       http.MultipartFile.fromBytes("chunk", cipherChunk,
+//           filename: "chunk_$chunkIndex.bin"),
+//     );
+
+//     req.headers["X-Chunk-Nonce"] = base64Encode(nonce);
+//     req.headers["X-Chunk-Mac-B64"] = base64Encode(mac);
+//     req.headers["X-Chunk-Ciphertext-Sha256"] =
+//         sha256.convert(cipherChunk).toString();
+
+//     final res = await req.send();
+//     final ok = res.statusCode == 200 || res.statusCode == 201;
+
+//     if (!ok) {
+//       print("❌ Chunk $chunkIndex upload failed: ${res.statusCode}");
+//     }
+
+//     return ok;
+//   }
+
+//   /// 3️⃣ Finish upload assembly → returns success
+//   static Future<bool> finishUpload({required String uploadId}) async {
+//     final url = Uri.parse("$_baseUrl/upload/finish/$uploadId/");
+//     final res = await http.post(url, headers: _authHeaders());
+//     print("Finish upload ${res.statusCode}: ${res.body}");
+//     return res.statusCode == 200;
+//   }
+// }
+
+
+
+
+// *****************************************************************************
+
+// // lib/services/upload_service.dart
+// import 'dart:convert';
+// import 'dart:typed_data';
+
+// import 'package:crypto/crypto.dart';
+// import 'package:http/http.dart' as http;
+
+// import '../state/secure_state.dart';
+
+// class UploadService {
+//   /// Base API URL — must include `/api`
+//   static String get _baseUrl => "${SecureState.serverUrl}/api";
+
+//   static Map<String, String> _authHeaders() => SecureState.authHeader();
+
+//   /// helper
+//   static Uri _url(String path) => Uri.parse("$_baseUrl$path");
+
+//   // ----------------------------------------------------------------------
+//   // 1️⃣ Start an upload session
+//   // ----------------------------------------------------------------------
+//   static Future<String?> startUpload({
+//     required String filename,
+//     required int fileSize,
+//     required int chunkSize,
+//   }) async {
+//     final url = _url("/upload/start/");
+
+//     final body = jsonEncode({
+//       "filename": filename,
+//       "size": fileSize,
+//       "chunk_size": chunkSize,
+//       "manifest": {"encryption": "xchacha20-poly1305"},
+//     });
+
+//     final res = await http.post(
+//       url,
+//       headers: {
+//         ..._authHeaders(),
+//         "Content-Type": "application/json",
+//       },
+//       body: body,
+//     );
+
+//     if (res.statusCode != 200) {
+//       print("❌ start_upload failed: ${res.statusCode} ${res.body}");
+//       return null;
+//     }
+
+//     final map = jsonDecode(res.body) as Map<String, dynamic>;
+//     return map["upload_id"] as String?;
+//   }
+
+//   // ----------------------------------------------------------------------
+//   // 2️⃣ Upload a single encrypted chunk
+//   // ----------------------------------------------------------------------
+//   static Future<bool> uploadChunk({
+//     required String uploadId,
+//     required int chunkIndex,
+//     required Uint8List cipherChunk,
+//     required Uint8List nonce,
+//     required Uint8List mac,
+//   }) async {
+//     final url = _url("/upload/chunk/$uploadId/$chunkIndex/");
+
+//     final req = http.MultipartRequest("POST", url);
+//     req.headers.addAll(_authHeaders());
+
+//     req.files.add(
+//       http.MultipartFile.fromBytes(
+//         "chunk",
+//         cipherChunk,
+//         filename: "chunk_$chunkIndex.bin",
+//       ),
+//     );
+
+//     req.headers["X-Chunk-Nonce"] = base64Encode(nonce);
+//     req.headers["X-Chunk-Mac-B64"] = base64Encode(mac);
+//     req.headers["X-Chunk-Ciphertext-Sha256"] =
+//         sha256.convert(cipherChunk).toString();
+
+//     final streamed = await req.send();
+
+//     if (streamed.statusCode != 200 && streamed.statusCode != 201) {
+//       print("❌ upload_chunk($chunkIndex) failed: ${streamed.statusCode}");
+//       return false;
+//     }
+
+//     return true;
+//   }
+
+//   // ----------------------------------------------------------------------
+//   //  Finish the upload — assemble final file
+//   // ----------------------------------------------------------------------
+//   static Future<bool> finishUpload({required String uploadId}) async {
+//     final url = _url("/upload/finish/$uploadId/");
+//     final res = await http.post(url, headers: _authHeaders());
+
+//     print("Finish upload $uploadId → ${res.statusCode} ${res.body}");
+
+//     return res.statusCode == 200;
+//   }
+// }
+
+// ======----------------------------------------------------------------=====
+// lib/services/upload_service.dart
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:crypto/crypto.dart';
+import 'package:http/http.dart' as http;
+import 'package:image/image.dart' as img;
+import 'package:cryptography/cryptography.dart';
+
+import '../../state/secure_state.dart';
+
+class UploadService {
+  // =============================================================
+  // BASE CONFIG
+  // =============================================================
+
+  static String get _baseUrl => SecureState.serverUrl;
+
+  static Map<String, String> _authHeaders() =>
+      SecureState.authHeader();
+
+  static Uri _url(String path) =>
+      Uri.parse("$_baseUrl$path");
+
+  // =============================================================
+  // 1️⃣ START UPLOAD SESSION
+  // =============================================================
+
+  static Future<String?> startUpload({
+    required String filename,
+    required int fileSize,
+    required int chunkSize,
+    required String securityMode, // "standard" | "zero_knowledge"
+  }) async {
+    final res = await http.post(
+      _url("/upload/start/"),
+      headers: {
+        ..._authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: jsonEncode({
+        "filename": filename,
+        "size": fileSize,
+        "chunk_size": chunkSize,
+        "security_mode": securityMode,
+      }),
+    );
+
+    if (res.statusCode != 200) {
+      print("❌ start_upload failed: ${res.statusCode} ${res.body}");
+      return null;
+    }
+
+    return jsonDecode(res.body)["upload_id"];
+  }
+
+  // =============================================================
+  // 2️⃣ RESUME UPLOAD (SERVER STATE)
+  // =============================================================
+
+  static Future<Set<int>?> resumeUpload(String uploadId) async {
+    final res = await http.get(
+      _url("/upload/resume/$uploadId/"),
+      headers: _authHeaders(),
+    );
+
+    if (res.statusCode != 200) {
+      print("❌ resume_upload failed: ${res.statusCode}");
+      return null;
+    }
+
+    final decoded = jsonDecode(res.body);
+    final List<dynamic> uploaded = decoded["uploaded_indices"];
+
+    return uploaded.map((e) => e as int).toSet();
+  }
+
+  // =============================================================
+  // 3️⃣ UPLOAD ENCRYPTED CHUNK
+  // =============================================================
+
+  static Future<bool> uploadChunk({
+    required String uploadId,
+    required int chunkIndex,
+    required Uint8List cipherChunk,
+    required Uint8List nonce,
+    required Uint8List mac,
+
+  }) async {
+    try{
+    final req = http.MultipartRequest(
+      "POST",
+      _url("/upload/chunk/$uploadId/$chunkIndex/"),
+    );
+
+    req.headers.addAll(_authHeaders());
+
+    req.files.add(
+      http.MultipartFile.fromBytes(
+        "chunk",
+        cipherChunk,
+        filename: "chunk_$chunkIndex.bin",
+      ),
+    );
+
+    req.headers["X-Chunk-Nonce"] =
+        base64Encode(nonce);
+
+    req.headers["X-Chunk-Ciphertext-Sha256"] =
+        sha256.convert(cipherChunk).toString();
+
+    final res = await req.send().timeout(const Duration(seconds: 20));
+
+    if (res.statusCode != 200 && res.statusCode != 201) 
+    // {
+    //   print("❌ upload_chunk $chunkIndex failed: ${res.statusCode}");
+    //   return false;
+    // }
+
+    return true;
+  
+  }
+  catch(e){
+    print("❌ upload_chunk $chunkIndex failed: $e");
+    return false;
+  }
+}
+
+  // =============================================================
+  // 4️⃣ FINISH UPLOAD
+  // =============================================================
+
+  static Future<bool> finishUpload({
+    required String uploadId,
+  }) async {
+    final res = await http.post(
+      _url("/upload/finish/$uploadId/"),
+      headers: _authHeaders(),
+    );
+
+    if (res.statusCode != 200) {
+      print("❌ finish_upload failed: ${res.statusCode} ${res.body}");
+      return false;
+    }
+
+    return true;
+  }
+
+  // =============================================================
+  // 🔐 ZERO-KNOWLEDGE THUMBNAILS (CLIENT GENERATED)
+  // =============================================================
+
+  static Future<Uint8List?> generateThumbnail(File file) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final decoded = img.decodeImage(bytes);
+      if (decoded == null) return null;
+
+      final resized = img.copyResize(decoded, width: 256);
+
+      return Uint8List.fromList(
+        img.encodeJpg(resized, quality: 75),
+      );
+    } catch (e) {
+      print("⚠️ thumbnail generation failed: $e");
+      return null;
+    }
+  }
+
+  static Future<Uint8List> encryptThumbnail(
+    Uint8List thumbnailBytes,
+  ) async {
+    final algo = Xchacha20.poly1305Aead();
+
+    // ⚠️ MVP ONLY — replace with master key
+    final secretKey = SecretKey(Uint8List(32));
+    final nonce = await algo.newNonce();
+
+    final box = await algo.encrypt(
+      thumbnailBytes,
+      secretKey: secretKey,
+      nonce: nonce,
+    );
+
+    return Uint8List.fromList([
+      ...nonce,
+      ...box.cipherText,
+      ...box.mac.bytes,
+    ]);
+  }
+
+  static Future<bool> uploadZeroKnowledgeThumbnail({
+    required String uploadId,
+    required Uint8List encryptedThumbnail,
+  }) async {
+    final req = http.MultipartRequest(
+      "POST",
+      _url("/upload/$uploadId/thumbnail/zero/"),
+    );
+
+    req.headers.addAll(_authHeaders());
+
+    req.files.add(
+      http.MultipartFile.fromBytes(
+        "thumbnail",
+        encryptedThumbnail,
+        filename: "thumb.enc",
+      ),
+    );
+
+    final res = await req.send();
+
+    if (res.statusCode != 200 && res.statusCode != 201) {
+      print("❌ zero-knowledge thumbnail upload failed: ${res.statusCode}");
+      return false;
+    }
+
+    return true;
+  }
+
+  // =============================================================
+  // 🖼️ STANDARD MODE THUMBNAILS (SERVER GENERATED)
+  // =============================================================
+
+  static Future<bool> generateStandardThumbnail({
+    required String uploadId,
+  }) async {
+    final res = await http.post(
+      _url("/upload/$uploadId/thumbnail/standard/"),
+      headers: _authHeaders(),
+    );
+
+    if (res.statusCode != 200) {
+      print("❌ standard thumbnail generation failed: ${res.statusCode}");
+      return false;
+    }
+
+    return true;
+  }
+}
+--------------------------------------------------------------------------------------------------
+
+
+
+// // lib/services/upload_service.dart
+// import 'dart:convert';
+// import 'dart:io';
+// import 'dart:typed_data';
+
+// import 'package:crypto/crypto.dart';
+// import 'package:http/http.dart' as http;
+// import 'package:image/image.dart' as img;
+// import 'package:cryptography/cryptography.dart';
+// import 'package:flutter/foundation.dart';
+
+// import '../state/secure_state.dart';
+
+// class UploadService {
+//   // =============================================================
+//   // BASE CONFIG
+//   // =============================================================
+
+//   static String get _baseUrl => SecureState.serverUrl;
+
+//   static Map<String, String> _authHeaders() =>
+//       SecureState.authHeader();
+
+//   static Uri _url(String path) =>
+//       Uri.parse("$_baseUrl$path");
+
+//   // =============================================================
+//   // 1️⃣ START UPLOAD
+//   // =============================================================
+
+//   static Future<String?> startUpload({
+//     required String filename,
+//     required int fileSize,
+//     required int chunkSize,
+//     required String securityMode, // "standard" | "zero_knowledge"
+//   }) async {
+//     try {
+//       final res = await http.post(
+//         _url("/upload/start/"),
+//         headers: {
+//           ..._authHeaders(),
+//           "Content-Type": "application/json",
+//         },
+//         body: jsonEncode({
+//           "filename": filename,
+//           "size": fileSize,
+//           "chunk_size": chunkSize,
+//           "security_mode": securityMode,
+//         }),
+//       );
+
+//       if (res.statusCode != 200) {
+//         debugPrint("❌ start_upload failed: ${res.body}");
+//         return null;
+//       }
+
+//       return jsonDecode(res.body)["upload_id"];
+//     } catch (e) {
+//       debugPrint("❌ start_upload exception: $e");
+//       return null;
+//     }
+//   }
+
+//   // =============================================================
+//   // 2️⃣ RESUME UPLOAD
+//   // =============================================================
+
+//   static Future<Set<int>?> resumeUpload(String uploadId) async {
+//     try {
+//       final res = await http.get(
+//         _url("/upload/resume/$uploadId/"),
+//         headers: _authHeaders(),
+//       );
+
+//       if (res.statusCode != 200) return null;
+
+//       final decoded = jsonDecode(res.body);
+//       final List<dynamic> uploaded = decoded["uploaded_indices"];
+//       return uploaded.map((e) => e as int).toSet();
+//     } catch (_) {
+//       return null;
+//     }
+//   }
+
+//   // =============================================================
+//   // 3️⃣ UPLOAD CHUNK (ENCRYPTED)
+//   // =============================================================
+
+//   // static Future<bool> uploadChunk({
+//   //   required String uploadId,
+//   //   required int chunkIndex,
+//   //   required Uint8List cipherChunk,
+//   //   required Uint8List nonce,
+//   //   required Uint8List mac,
+//   // }) async {
+//   //   try {
+//   //     final req = http.MultipartRequest(
+//   //       "POST",
+//   //       _url("/upload/chunk/$uploadId/$chunkIndex/"),
+//   //     );
+
+//   //     req.headers.addAll(_authHeaders());
+
+//   //     req.files.add(
+//   //       http.MultipartFile.fromBytes(
+//   //         "chunk",
+//   //         cipherChunk,
+//   //         filename: "chunk_$chunkIndex.bin",
+//   //       ),
+//   //     );
+
+//   //     req.headers["X-Chunk-Nonce"] = base64Encode(nonce);
+//   //     req.headers["X-Chunk-Ciphertext-Sha256"] =
+//   //         sha256.convert(cipherChunk).toString();
+
+//   //     final res = await req.send();
+//   //     return res.statusCode == 200 || res.statusCode == 201;
+//   //   } catch (_) {
+//   //     return false;
+//   //   }
+//   // }
+//     static Future<bool> uploadChunk({
+//     required String uploadId,
+//     required int chunkIndex,
+//     required Uint8List cipherChunk,
+//     required Uint8List nonce,
+//     required Uint8List mac,
+//   }) async {
+//     try {
+//       final req = http.MultipartRequest(
+//         "POST",
+//         _url("/upload/chunk/$uploadId/$chunkIndex/"),
+//       );
+
+//       req.headers.addAll(_authHeaders());
+
+//       req.headers["X-Chunk-Nonce"] = base64Encode(nonce);
+//       req.headers["X-Chunk-Mac"]   = base64Encode(mac);
+
+//       req.files.add(
+//         http.MultipartFile.fromBytes(
+//           "chunk",
+//           cipherChunk,
+//           filename: "chunk_$chunkIndex.bin",
+//         ),
+//       );
+
+//       final res = await req.send();
+//       return res.statusCode == 200;
+//     } catch (e) {
+//       debugPrint("❌ upload_chunk failed: $e");
+//       return false;
+//     }
+//   }
+
+
+//   // =============================================================
+//   // 4️⃣ FINISH UPLOAD
+//   // =============================================================
+
+//   static Future<bool> finishUpload({
+//     required String uploadId,
+//   }) async {
+//     try {
+//       final res = await http.post(  
+//         _url("/upload/finish/$uploadId/"),
+//         headers: _authHeaders(),
+//       );
+
+//       return res.statusCode == 200;
+//     } catch (_) {
+//       return false;
+//     }
+//   }
+
+//   // =============================================================
+//   // 🔐 ZERO-KNOWLEDGE THUMBNAILS ONLY
+//   // =============================================================
+
+//   static Future<Uint8List?> generateThumbnail(File file) async {
+//     try {
+//       final bytes = await file.readAsBytes();
+//       final decoded = img.decodeImage(bytes);
+//       if (decoded == null) return null;
+
+//       final resized = img.copyResize(decoded, width: 256);
+
+//       return Uint8List.fromList(
+//         img.encodeJpg(resized, quality: 75),
+//       );
+//     } catch (_) {
+//       return null;
+//     }
+//   }
+
+//   static Future<Uint8List> encryptThumbnail(
+//     Uint8List thumbnailBytes,
+//   ) async {
+//     final algo = Xchacha20.poly1305Aead();
+//     final secretKey = SecretKey(Uint8List(32)); // MVP key
+//     final nonce = await algo.newNonce();
+
+//     final box = await algo.encrypt(
+//       thumbnailBytes,
+//       secretKey: secretKey,
+//       nonce: nonce,
+//     );
+
+//     return Uint8List.fromList([
+//       ...nonce,
+//       ...box.cipherText,
+//       ...box.mac.bytes,
+//     ]);
+//   }
+
+//   static Future<bool> uploadZeroKnowledgeThumbnail({
+//     required String uploadId,
+//     required Uint8List encryptedThumbnail,
+//   }) async {
+//     try {
+//       final req = http.MultipartRequest(
+//         "POST",
+//         _url("/upload/$uploadId/thumbnail/zero/"),
+//       );
+
+//       req.headers.addAll(_authHeaders());
+
+//       req.files.add(
+//         http.MultipartFile.fromBytes(
+//           "thumbnail",
+//           encryptedThumbnail,
+//           filename: "thumb.enc",
+//         ),
+//       );
+
+//       final res = await req.send();
+//       return res.statusCode == 200 || res.statusCode == 201;
+//     } catch (_) {
+//       return false;
+//     }
+//   }
+// }
+
+----------------------------------------------------------------------------------------------------------------------------------
+
+
+
+//=======================================================================================
+// lib/services/upload_service.dart
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:http/http.dart' as http;
+
+import '../../state/secure_state.dart';
+
+class UploadService {
+  // Build upload base URL from SecureState
+  static String get baseUrl =>
+      "${SecureState.serverBaseUrl}/upload";
+
+  static Map<String, String> _authHeaders() {
+    final token = SecureState.accessToken;
+    if (token == null) {
+      throw Exception("Not authenticated");
+    }
+    return {"Authorization": "Bearer $token"};
+  }
+
+  static Future<String> startUpload({
+    required String filename,
+    required int fileSize,
+    required int chunkSize,
+    required String securityMode,
+  }) async {
+    final res = await http.post(
+      Uri.parse("$baseUrl/file/start/"),
+      headers: {
+        ..._authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: jsonEncode({
+        "filename": filename,
+        "size": fileSize,
+        "chunk_size": chunkSize,
+        "security_mode": securityMode,
+      }),
+    );
+
+    if (res.statusCode != 200) {
+      throw Exception("startUpload failed");
+    }
+
+    return jsonDecode(res.body)["file_id"];
+  }
+
+  static Future<Set<int>> resumeUpload(String fileId) async {
+    final res = await http.get(
+      Uri.parse("$baseUrl/file/$fileId/resume/"),
+      headers: _authHeaders(),
+    );
+
+    if (res.statusCode != 200) return {};
+
+    final list = jsonDecode(res.body)["uploaded_indices"] ?? [];
+    return list.cast<int>().toSet();
+  }
+
+  static Future<void> finishUpload(String fileId) async {
+    final res = await http.post(
+      Uri.parse("$baseUrl/file/$fileId/finish/"),
+      headers: _authHeaders(),
+    );
+
+    if (res.statusCode != 200) {
+      throw Exception("finishUpload failed");
+    }
+  }
+}

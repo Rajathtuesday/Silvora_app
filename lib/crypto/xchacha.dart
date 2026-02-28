@@ -1,52 +1,73 @@
+// ============================================================================
+// XChaCha20-Poly1305 AEAD
+// - Supports AAD
+// - Returns ciphertext || mac
+// ============================================================================
 
-// =========================================================================
-//   /// Decrypt multiple AEAD chunks and concatenate
-// lib/crypto/xchacha.dart
 import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 
-class XChaCha {
-  static final Xchacha20 _algo =
-      Xchacha20.poly1305Aead();
+final Xchacha20 _algo = Xchacha20.poly1305Aead();
 
-  Future<Uint8List> encrypt({
-    required Uint8List plaintext,
-    required Uint8List key,
-    required Uint8List nonce,
-  }) async {
-    final secretBox = await _algo.encrypt(
-      plaintext,
-      secretKey: SecretKey(key),
-      nonce: nonce,
-    );
+const int _macLength = 16;
 
-    return Uint8List.fromList([
-      ...secretBox.cipherText,
-      ...secretBox.mac.bytes,
-    ]);
+/// Encrypts plaintext.
+/// Returns ciphertext || mac
+Future<Uint8List> xchachaEncrypt({
+  required Uint8List key,
+  required Uint8List plaintext,
+  required Uint8List nonce,
+  Uint8List? aad,
+}) async {
+  if (nonce.length != _algo.nonceLength) {
+    throw ArgumentError("Invalid nonce length");
   }
 
-  Future<Uint8List> decrypt({
-    required Uint8List ciphertext,
-    required Uint8List key,
-    required Uint8List nonce,
-    required Uint8List mac,
-  }) async {
-    final box = SecretBox(
-      ciphertext,
-      nonce: nonce,
-      mac: Mac(mac),
-    );
+  final SecretBox box = await _algo.encrypt(
+    plaintext,
+    secretKey: SecretKey(key),
+    nonce: nonce,
+    aad: aad ?? const <int>[],
+  );
 
-    final plain = await _algo.decrypt(
-      box,
-      secretKey: SecretKey(key),
-    );
+  return Uint8List.fromList(
+    box.cipherText + box.mac.bytes,
+  );
+}
 
-    return Uint8List.fromList(plain);
+/// Decrypts ciphertext || mac
+Future<Uint8List> xchachaDecrypt({
+  required Uint8List ciphertext,
+  required Uint8List key,
+  required Uint8List nonce,
+  Uint8List? aad,
+}) async {
+  if (nonce.length != _algo.nonceLength) {
+    throw ArgumentError("Invalid nonce length");
   }
 
-  Uint8List randomNonce() {
-    return Uint8List.fromList(_algo.newNonce());
+  if (ciphertext.length < _macLength) {
+    throw ArgumentError("Ciphertext too short");
   }
+
+  final int ctLen = ciphertext.length - _macLength;
+
+  final SecretBox box = SecretBox(
+    ciphertext.sublist(0, ctLen),
+    nonce: nonce,
+    mac: Mac(ciphertext.sublist(ctLen)),
+  );
+
+  final plain = await _algo.decrypt(
+    box,
+    secretKey: SecretKey(key),
+    aad: aad ?? const <int>[],
+  );
+
+  return Uint8List.fromList(plain);
+}
+
+/// If needed elsewhere (filename crypto)
+Uint8List randomXChaChaNonce() {
+  return Uint8List.fromList(_algo.newNonce());
 }

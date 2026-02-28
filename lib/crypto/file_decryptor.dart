@@ -1,48 +1,38 @@
-
 // ============================================================================
-// lib/crypto/file_decryptor.dart
-// lib/crypto/file_decryptor.dart
-import 'dart:convert';
+// File Decryptor
+//
+// Reassembles and decrypts a file from encrypted chunks.
+// - Mirrors upload chunk encryption exactly
+// - No manifest crypto
+// - No master key usage
+// ============================================================================
+
 import 'dart:typed_data';
 
-import 'hkdf.dart';
-import 'xchacha.dart';
+import 'chunk_crypto.dart';
 
 class FileDecryptor {
-  final Uint8List masterKey;
-  final Map<String, dynamic> manifest;
+  final Uint8List fileKey;
 
   FileDecryptor({
-    required this.masterKey,
-    required this.manifest,
+    required this.fileKey,
   });
 
-  final _crypto = XChaCha();
+  /// Decrypt chunks in order and return full plaintext
+  Future<Uint8List> decryptChunks({
+    required List<Uint8List> encryptedChunks,
+    required String fileId,
+  }) async {
+    final BytesBuilder out = BytesBuilder();
 
-  Future<Uint8List> decrypt(Uint8List encrypted) async {
-    final chunks =
-        List<Map<String, dynamic>>.from(manifest["chunks"]);
+    for (int index = 0; index < encryptedChunks.length; index++) {
+      final Uint8List encrypted = encryptedChunks[index];
 
-    final out = BytesBuilder();
-
-    for (final c in chunks) {
-      final int offset = c["offset"];
-      final int size = c["ciphertext_size"];
-
-      final cipher =
-          encrypted.sublist(offset, offset + size);
-
-      // ✅ FIX: await HKDF
-      final Uint8List key = await hkdfSha256(
-        ikm: masterKey,
-        info: utf8.encode("silvora-chunk-${c["index"]}"),
-      );
-
-      final plain = await _crypto.decrypt(
-        ciphertext: cipher,
-        key: key,
-        nonce: base64Decode(c["nonce_b64"]),
-        mac: base64Decode(c["mac_b64"]),
+      final Uint8List plain = await decryptChunk(
+        ciphertextWithMac: encrypted,
+        fileKey: fileKey,
+        chunkIndex: index,
+        fileId: fileId, // File ID is not used in key derivation for decryption, but is required for AAD. In a real implementation, this should be the actual file ID.
       );
 
       out.add(plain);

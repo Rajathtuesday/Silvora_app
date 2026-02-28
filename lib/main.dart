@@ -1,15 +1,16 @@
-
-// ================================================================================
 // lib/main.dart
 import 'package:flutter/material.dart';
+import 'package:silvora_app/state/secure_state.dart';
+import 'theme/app_theme.dart';
 
-import 'screens/login/login_screen.dart';
-import 'screens/login/register_screen.dart';
-import 'screens/files/file_list_screen.dart';
-import 'screens/app_entry/app_entry.dart';
+import 'presentation/screens/login/login_screen.dart';
+import 'presentation/screens/login/register_screen.dart';
+import 'presentation/screens/files/file_list_screen.dart';
+import 'presentation/screens/app_entry/app_entry.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await SecureState.restoreSession();
   runApp(const SilvoraApp());
 }
 
@@ -20,12 +21,8 @@ class SilvoraApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(useMaterial3: true),
-
-      /// 🔑 AppEntry is now the real startup brain
+      theme: AppTheme.dark(),
       home: const AppEntry(),
-
-      /// Named routes stay exactly as they are
       routes: {
         '/login': (_) => const LoginScreen(),
         '/register': (_) => const RegisterScreen(),
