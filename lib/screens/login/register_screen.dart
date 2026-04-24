@@ -81,23 +81,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
           final nonce = await XChaCha.randomNonce();
           final box = await XChaCha.encrypt(plaintext: masterKey, key: kek, nonce: nonce);
           
-          final envelopeBytes = Uint8List.fromList([...box.cipherText, ...box.mac.macBytes]);
+          final envelopeBytes = Uint8List.fromList([...box.cipherText, ...box.mac.bytes]);
           
           String bytesToHex(Uint8List bytes) {
             return bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join('');
           }
 
-          await http.post(
+          final setupResp = await http.post(
             Uri.parse("${SecureState.serverUrl}/api/auth/master-key/setup/"),
             headers: SecureState.authHeader(),
             body: jsonEncode({
               "kdf_salt": bytesToHex(salt),
               "kdf_iterations": 3,
+              "kdf_memory_kb": 65536,
+              "kdf_parallelism": 1,
               "enc_master_key": bytesToHex(envelopeBytes),
               "enc_master_key_nonce": bytesToHex(nonce),
-              "key_version": 1
             }),
           );
+
+          if (setupResp.statusCode != 201) {
+            if (mounted) {
+              setState(() => _errorMessage = "Failed to secure vault. Please try again.");
+            }
+            return;
+          }
         }
 
         if (!mounted) return;

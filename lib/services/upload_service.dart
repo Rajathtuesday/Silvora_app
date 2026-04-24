@@ -66,7 +66,7 @@ class UploadService {
         }),
       );
 
-      if (res.statusCode != 200) {
+      if (res.statusCode != 201) {
         debugPrint("❌ start_upload failed: ${res.body}");
         return null;
       }

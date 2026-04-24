@@ -51,15 +51,40 @@ class AuthClient {
     });
   }
 
+  static bool _isTokenExpired(String token) {
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return true;
+      final payload = utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+      final map = jsonDecode(payload);
+      final exp = map['exp'] as int;
+      final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      return now >= (exp - 10); // 10s buffer
+    } catch (_) {
+      return true;
+    }
+  }
+
   static Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final token = SecureState.accessToken;
+    if (token != null && _isTokenExpired(token) && SecureState.refreshToken != null) {
+      final refreshRes = await http.post(
+        Uri.parse("${SecureState.serverUrl}/api/auth/token/refresh/"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"refresh": SecureState.refreshToken}),
+      );
+      if (refreshRes.statusCode == 200) {
+        final data = jsonDecode(refreshRes.body);
+        SecureState.accessToken = data["access"];
+        if (data.containsKey("refresh")) {
+          SecureState.refreshToken = data["refresh"];
+        }
+      } else {
+        SecureState.logout();
+      }
+    }
+    
     request.headers.addAll(SecureState.authHeader());
-    
-    // We can't easily retry a streamed request because the body stream might be consumed.
-    // For MultipartRequest (upload chunk), we just send it. If 401, it fails.
-    // To properly support multipart retry, we'd have to recreate the request.
-    // Given the complexity, we'll assume short-lived multipart chunks, or we refresh beforehand.
-    // A better way is to do a proactive refresh check, but for MVP we just send.
-    
     return request.send();
   }
 }

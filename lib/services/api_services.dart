@@ -114,7 +114,8 @@ class ApiService {
           );
           final plain = await algo.decrypt(box, secretKey: SecretKey(nameKeyBytes));
           f["filename"] = utf8.decode(plain);
-        } catch (_) {
+        } catch (e) {
+          debugPrint("Filename decrypt failed in trash for ${f['file_id']}: $e");
           f["filename"] = "Encrypted File";
         }
       }
