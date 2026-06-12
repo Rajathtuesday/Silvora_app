@@ -1,0 +1,26 @@
+name: app-ci
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  analyze-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Static analysis (fails on errors/warnings)
+        run: flutter analyze
+
+      - name: Unit tests
+        run: flutter test
