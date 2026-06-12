@@ -199,7 +199,7 @@ class _FileListScreenState extends State<FileListScreen> {
               contentPadding: const EdgeInsets.all(8),
               content: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: Image.memory(result.bytes, fit: BoxFit.contain),
+                child: Image.file(result.file, fit: BoxFit.contain),
               ),
               actions: [
                 TextButton(
@@ -223,7 +223,7 @@ class _FileListScreenState extends State<FileListScreen> {
           );
         } else if (result.mimeType == "text/plain") {
           // ── Text preview ──
-          final text = String.fromCharCodes(result.bytes);
+          final text = await result.file.readAsString();
           showDialog(
             context: context,
             builder: (c) => AlertDialog(

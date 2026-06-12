@@ -76,7 +76,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
           
           final random = Random.secure();
           final salt = Uint8List.fromList(List.generate(16, (_) => random.nextInt(256)));
-          final kek = await Argon2Kdf.deriveKey(password: password, salt: salt, iterations: 3);
+          // Derive with the exact params we store in the envelope below, so
+          // unlock can reproduce this KEK. (Previously the stored parallelism
+          // did not match the value actually used.)
+          final kek = await Argon2Kdf.deriveKey(
+            password: password,
+            salt: salt,
+            iterations: 3,
+            memoryKb: 65536,
+            parallelism: 1,
+          );
           
           final nonce = await XChaCha.randomNonce();
           final box = await XChaCha.encrypt(plaintext: masterKey, key: kek, nonce: nonce);

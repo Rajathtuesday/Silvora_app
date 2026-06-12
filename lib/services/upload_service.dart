@@ -1,10 +1,8 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'auth_client.dart';
-import 'package:image/image.dart' as img;
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';

@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 
-import 'package:http/http.dart' as http;
 import 'auth_client.dart';
 import 'package:cryptography/cryptography.dart';
 
@@ -11,8 +10,6 @@ import '../crypto/hkdf.dart';
 
 class ApiService {
   static Uri _url(String path) => Uri.parse("${SecureState.serverUrl}$path");
-
-  static Map<String, String> _headers() => SecureState.authHeader();
 
   static Uint8List _hexToBytes(String hex) {
     hex = hex.trim();

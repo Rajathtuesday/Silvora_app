@@ -66,7 +66,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       // 2. Fetch Master Key Envelope from Server
       final metaResp = await http.get(
-        Uri.parse("$server/api/auth/masterkey/meta/"),
+        Uri.parse("$server/api/auth/master-key/"),
         headers: SecureState.authHeader(),
       );
 
@@ -104,13 +104,19 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<Uint8List> _unlockVault(String password, Map<String, dynamic> meta) async {
     final salt = _hexToBytes(meta["kdf_salt_hex"]);
     final nonce = _hexToBytes(meta["nonce_hex"]);
-    final iterations = meta["kdf_iterations"] ?? 3; // match backend defaults
-    
+    // Use the SAME KDF parameters the vault was created with. Never hardcode
+    // these at unlock or a future tuning change silently breaks every vault.
+    final iterations = meta["kdf_iterations"] ?? 3;
+    final memoryKb = meta["kdf_memory_kb"] ?? 65536;
+    final parallelism = meta["kdf_parallelism"] ?? 1;
+
     // 1. Derive Key Encrypting Key (KEK) from user password
     final kek = await Argon2Kdf.deriveKey(
       password: password,
       salt: salt,
       iterations: iterations,
+      memoryKb: memoryKb,
+      parallelism: parallelism,
     );
 
     // 2. Decrypt the Master Key

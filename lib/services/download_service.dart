@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 import 'package:http/http.dart' as http;
@@ -24,14 +23,8 @@ class DecryptedFileResult {
 }
 
 class DownloadService {
-  static const int _nonceLen = 24; // XChaCha20 nonce is always 24 bytes
-  static const int _macLen   = 16; // Poly1305 MAC is always 16 bytes
-
   static String get _baseUrl => SecureState.serverUrl;
-  static Map<String, String> _authHeaders() => SecureState.authHeader();
   static Uri _url(String path) => Uri.parse("$_baseUrl$path");
-
-  static final Xchacha20 _algorithm = Xchacha20.poly1305Aead();
 
   /// Derive per-file encryption key from master key + fileId
   static Future<SecretKey> _deriveFileKey(String fileId) async {

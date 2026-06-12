@@ -118,14 +118,10 @@
 import 'dart:typed_data';
 import 'dart:math';
 
-import 'package:cryptography/src/cryptography/secret_box.dart';
-
 import 'xchacha.dart';
 import 'master_key.dart';
 
 Future<void> runCryptoSelfTest() async {
-  final crypto = XChaCha();
-
   // 1️⃣ Generate master key
   final Uint8List masterKey = MasterKey.generate();
 
@@ -136,24 +132,20 @@ Future<void> runCryptoSelfTest() async {
   );
 
   // 3️⃣ Nonce
-  final Uint8List nonce = await crypto.randomNonce();
+  final Uint8List nonce = await XChaCha.randomNonce();
 
-  // 4️⃣ Encrypt → returns SecretBox internally
-  final encrypted = await crypto.encrypt(
+  // 4️⃣ Encrypt → returns a SecretBox (cipherText + mac)
+  final box = await XChaCha.encrypt(
     plaintext: plain,
     key: masterKey,
     nonce: nonce,
   );
 
-  // 🔍 encrypted = cipherText || mac (your wrapper design)
-  final int macLen = 16;
-  final Uint8List cipherText =
-      encrypted.sublist(0, encrypted.length - macLen);
-  final Uint8List mac =
-      encrypted.sublist(encrypted.length - macLen);
+  final Uint8List cipherText = Uint8List.fromList(box.cipherText);
+  final Uint8List mac = Uint8List.fromList(box.mac.bytes);
 
   // 5️⃣ Decrypt
-  final Uint8List decrypted = await crypto.decrypt(
+  final Uint8List decrypted = await XChaCha.decrypt(
     ciphertext: cipherText,
     key: masterKey,
     nonce: nonce,
