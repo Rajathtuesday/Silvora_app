@@ -212,11 +212,12 @@ class _FileListScreenState extends State<FileListScreen> {
   }) async {
     setState(() => _isDownloading = true);
 
+    DecryptedFileResult? result;
     try {
       final String fileId   = f["file_id"] as String;
       final String filename = (f["filename"] as String?) ?? "encrypted.enc";
 
-      final result = await DownloadService.downloadAndDecrypt(
+      result = await DownloadService.downloadAndDecrypt(
         fileId:   fileId,
         filename: filename,
       );
@@ -228,15 +229,15 @@ class _FileListScreenState extends State<FileListScreen> {
 
       if (previewOnly) {
         if (result.mimeType.startsWith('image/')) {
-          // ── Image preview ──
-          showDialog(
+          // ── Image preview ── (awaited so the temp file lives until closed)
+          await showDialog(
             context: context,
             builder: (c) => AlertDialog(
               backgroundColor: SilvoraColors.card,
               contentPadding: const EdgeInsets.all(8),
               content: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: Image.file(result.file, fit: BoxFit.contain),
+                child: Image.file(result!.file, fit: BoxFit.contain),
               ),
               actions: [
                 TextButton(
@@ -245,13 +246,13 @@ class _FileListScreenState extends State<FileListScreen> {
                 ),
                 TextButton(
                   onPressed: () async {
-                    Navigator.pop(c);
-                    final path = await DownloadService.saveToDevice(result);
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text("Saved to: $path")),
-                      );
-                    }
+                    final nav = Navigator.of(c);
+                    final messenger = ScaffoldMessenger.of(context);
+                    final path = await DownloadService.saveToDevice(result!);
+                    nav.pop();
+                    messenger.showSnackBar(
+                      SnackBar(content: Text("Saved to: $path")),
+                    );
                   },
                   child: const Text("Save to Device", style: TextStyle(color: SilvoraColors.gold)),
                 ),
@@ -261,7 +262,8 @@ class _FileListScreenState extends State<FileListScreen> {
         } else if (result.mimeType == "text/plain") {
           // ── Text preview ──
           final text = await result.file.readAsString();
-          showDialog(
+          if (!mounted) return;
+          await showDialog(
             context: context,
             builder: (c) => AlertDialog(
               backgroundColor: SilvoraColors.card,
@@ -325,6 +327,13 @@ class _FileListScreenState extends State<FileListScreen> {
           duration: const Duration(seconds: 6),
         ),
       );
+    } finally {
+      // Wipe the decrypted plaintext from temp storage (zero-knowledge at rest).
+      if (result != null) {
+        try {
+          if (await result.file.exists()) await result.file.delete();
+        } catch (_) {}
+      }
     }
   }
 
