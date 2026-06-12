@@ -58,9 +58,9 @@ class _AuthGateState extends State<AuthGate> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.shield_outlined, size: 64, color: SilvoraColors.gold),
+            Icon(Icons.shield_outlined, size: 64, color: SilvoraColors.primaryLight),
             SizedBox(height: 24),
-            CircularProgressIndicator(color: SilvoraColors.gold),
+            CircularProgressIndicator(color: SilvoraColors.primary),
           ],
         ),
       ),

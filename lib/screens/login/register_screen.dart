@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 
 import '../../crypto/argon2.dart';
@@ -168,16 +169,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 const Icon(
                   Icons.lock_person_rounded,
                   size: 64,
-                  color: SilvoraColors.gold,
+                  color: SilvoraColors.primaryLight,
                 ),
                 const SizedBox(height: 24),
-                const Text(
+                Text(
                   "Join Silvora",
                   textAlign: TextAlign.center,
-                  style: TextStyle(
+                  style: GoogleFonts.syne(
                     color: SilvoraColors.textPrimary,
                     fontSize: 28,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w700,
                     letterSpacing: -0.5,
                   ),
                 ),
@@ -245,8 +246,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ElevatedButton(
                   onPressed: _isLoading ? null : _register,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: SilvoraColors.gold,
-                    foregroundColor: Colors.black,
+                    backgroundColor: SilvoraColors.primary,
+                    foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(14),
@@ -262,7 +263,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           width: 20,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Colors.black,
+                            color: Colors.white,
                           ),
                         )
                       : const Text("Create Secure Vault"),

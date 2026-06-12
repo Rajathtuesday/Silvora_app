@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import '../../services/vault_service.dart';
 import '../../state/secure_state.dart';
@@ -73,11 +74,11 @@ class _UnlockScreenState extends State<UnlockScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.lock_outline, size: 72, color: SilvoraColors.gold),
+                const Icon(Icons.lock_outline, size: 72, color: SilvoraColors.primaryLight),
                 const SizedBox(height: 20),
-                const Text(
+                Text(
                   "Welcome back",
-                  style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold),
+                  style: GoogleFonts.syne(fontSize: 26, fontWeight: FontWeight.w700, color: SilvoraColors.textPrimary),
                 ),
                 const SizedBox(height: 8),
                 const Text(

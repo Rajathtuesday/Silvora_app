@@ -254,7 +254,7 @@ class _FileListScreenState extends State<FileListScreen> {
                       SnackBar(content: Text("Saved to: $path")),
                     );
                   },
-                  child: const Text("Save to Device", style: TextStyle(color: SilvoraColors.gold)),
+                  child: const Text("Save to Device", style: TextStyle(color: SilvoraColors.primaryLight)),
                 ),
               ],
             ),

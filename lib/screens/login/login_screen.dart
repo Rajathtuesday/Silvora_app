@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
 
 import '../../state/secure_state.dart';
@@ -96,9 +97,9 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(Icons.shield_outlined, size: 80, color: SilvoraColors.gold),
+                const Icon(Icons.shield_outlined, size: 80, color: SilvoraColors.primaryLight),
                 const SizedBox(height: 16),
-                const Text("Silvora Vault", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+                Text("Silvora Vault", style: GoogleFonts.syne(fontSize: 28, fontWeight: FontWeight.w700, color: SilvoraColors.textPrimary)),
                 const SizedBox(height: 48),
                 TextField(
                   controller: _usernameController,
