@@ -1,14 +1,13 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../../state/secure_state.dart';
+import '../../storage/jwt_store.dart';
+import '../../services/vault_service.dart';
 import '../files/file_list_screen.dart';
 import 'register_screen.dart';
 import '../../theme/silvora_theme.dart';
-import '../../crypto/argon2.dart';
-import '../../crypto/xchacha.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -64,25 +63,14 @@ class _LoginScreenState extends State<LoginScreen> {
       SecureState.accessToken = authData["access"];
       SecureState.refreshToken = authData["refresh"];
 
-      // 2. Fetch Master Key Envelope from Server
-      final metaResp = await http.get(
-        Uri.parse("$server/api/auth/master-key/"),
-        headers: SecureState.authHeader(),
-      );
+      // Persist the session so it survives an app restart.
+      await JwtStore().saveTokens(authData["access"], authData["refresh"]);
 
-      if (metaResp.statusCode == 200) {
-        final meta = jsonDecode(metaResp.body);
-        
-        // 3. Decrypt Master Key locally using user password
-        try {
-          final decryptedKey = await _unlockVault(password, meta);
-          SecureState.setMasterKey(decryptedKey);
-        } catch (e) {
-          setState(() => _errorMessage = "Failed to unlock vault. Security mismatch.");
-          return;
-        }
-      } else {
-        setState(() => _errorMessage = "Vault security record missing for this account.");
+      // Fetch the master-key envelope and unlock the vault locally.
+      try {
+        await VaultService.unlock(password);
+      } catch (e) {
+        setState(() => _errorMessage = "Failed to unlock vault. Check your password.");
         return;
       }
 
@@ -96,51 +84,6 @@ class _LoginScreenState extends State<LoginScreen> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
-  }
-
-  /// The core Zero-Knowledge unlock flow.
-  /// KDF(password, salt) -> KEK
-  /// Decrypt(envelope, KEK) -> Master Key
-  Future<Uint8List> _unlockVault(String password, Map<String, dynamic> meta) async {
-    final salt = _hexToBytes(meta["kdf_salt_hex"]);
-    final nonce = _hexToBytes(meta["nonce_hex"]);
-    // Use the SAME KDF parameters the vault was created with. Never hardcode
-    // these at unlock or a future tuning change silently breaks every vault.
-    final iterations = meta["kdf_iterations"] ?? 3;
-    final memoryKb = meta["kdf_memory_kb"] ?? 65536;
-    final parallelism = meta["kdf_parallelism"] ?? 1;
-
-    // 1. Derive Key Encrypting Key (KEK) from user password
-    final kek = await Argon2Kdf.deriveKey(
-      password: password,
-      salt: salt,
-      iterations: iterations,
-      memoryKb: memoryKb,
-      parallelism: parallelism,
-    );
-
-    // 2. Decrypt the Master Key
-    final encryptedHex = meta["encrypted_master_key_hex"]; 
-    final encryptedBytes = _hexToBytes(encryptedHex);
-    
-    // Our envelope format: ciphertext || mac (16 bytes)
-    final mac = encryptedBytes.sublist(encryptedBytes.length - 16);
-    final ciphertext = encryptedBytes.sublist(0, encryptedBytes.length - 16);
-
-    return await XChaCha.decrypt(
-      ciphertext: ciphertext,
-      key: kek,
-      nonce: nonce,
-      mac: mac,
-    );
-  }
-
-  Uint8List _hexToBytes(String hex) {
-    final res = <int>[];
-    for (var i = 0; i < hex.length; i += 2) {
-      res.add(int.parse(hex.substring(i, i + 2), radix: 16));
-    }
-    return Uint8List.fromList(res);
   }
 
   @override

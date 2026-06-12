@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:silvora_app/screens/login/login_screen.dart';
+import 'package:silvora_app/screens/auth_gate.dart';
 import 'package:silvora_app/theme/silvora_theme.dart';
 
 Future<void> main() async {
@@ -16,7 +16,7 @@ class SilvoraApp extends StatelessWidget {
       title: 'Silvora Base',
       debugShowCheckedModeBanner: false,
       theme: SilvoraTheme.dark(),
-      home: const LoginScreen(),
+      home: const AuthGate(),
     );
   }
 }

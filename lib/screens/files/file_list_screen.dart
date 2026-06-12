@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../services/api_services.dart';
 import '../../services/download_service.dart';
+import '../../state/secure_state.dart';
+import '../../storage/jwt_store.dart';
 import '../upload/upload_screen.dart';
 import '../trash/trash_screen.dart';
+import '../login/login_screen.dart';
 import '../../theme/silvora_theme.dart';
 
 class FileListScreen extends StatefulWidget {
@@ -25,6 +28,40 @@ class _FileListScreenState extends State<FileListScreen> {
 
   void _reloadFiles() {
     _filesFuture = ApiService.listFiles();
+  }
+
+  Future<void> _logout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: SilvoraColors.card2,
+        title: const Text("Lock & sign out?", style: TextStyle(color: SilvoraColors.textPrimary)),
+        content: const Text(
+          "Your vault will be locked and you'll need your master password to get back in.",
+          style: TextStyle(color: SilvoraColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancel", style: TextStyle(color: SilvoraColors.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Sign out", style: TextStyle(color: SilvoraColors.error)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+    SecureState.logout();
+    await JwtStore().clear();
+    if (!mounted) return;
+    Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
   }
 
   Future<void> _goToUpload() async {
@@ -315,6 +352,11 @@ class _FileListScreenState extends State<FileListScreen> {
             tooltip: "Refresh",
             onPressed: () => setState(_reloadFiles),
           ),
+          IconButton(
+            icon: const Icon(Icons.lock_outline, color: SilvoraColors.textSecondary),
+            tooltip: "Lock & sign out",
+            onPressed: _logout,
+          ),
           const SizedBox(width: 8),
         ],
       ),
@@ -374,7 +416,14 @@ class _FileListScreenState extends State<FileListScreen> {
                 );
               }
 
-              return ListView.builder(
+              return RefreshIndicator(
+                color: SilvoraColors.primary,
+                backgroundColor: SilvoraColors.card2,
+                onRefresh: () async {
+                  setState(_reloadFiles);
+                  await _filesFuture;
+                },
+                child: ListView.builder(
                 padding: const EdgeInsets.only(top: 16, bottom: 100, left: 16, right: 16),
                 itemCount: files.length,
                 itemBuilder: (context, index) {
@@ -426,6 +475,7 @@ class _FileListScreenState extends State<FileListScreen> {
                     ),
                   );
                 },
+                ),
               );
             },
           ),

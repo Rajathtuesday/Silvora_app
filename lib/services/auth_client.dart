@@ -1,30 +1,59 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../state/secure_state.dart';
+import '../storage/jwt_store.dart';
 
 class AuthClient {
-  static Future<http.Response> _retryWithRefresh(
-    Future<http.Response> Function(Map<String, String>) requestFunc,
-  ) async {
-    http.Response res = await requestFunc(SecureState.authHeader());
+  // Single-flight refresh: concurrent 401s share ONE refresh call. Without
+  // this, several requests refreshing at once each rotate the refresh token;
+  // the backend blacklists the old one, so all but the first fail and the user
+  // is logged out at random. One in-flight refresh fixes that.
+  static Future<bool>? _refreshInFlight;
 
-    if (res.statusCode == 401 && SecureState.refreshToken != null) {
-      final refreshRes = await http.post(
+  static Future<bool> _refreshTokens() {
+    return _refreshInFlight ??= _doRefresh().whenComplete(() {
+      _refreshInFlight = null;
+    });
+  }
+
+  static Future<bool> _doRefresh() async {
+    final refresh = SecureState.refreshToken;
+    if (refresh == null) return false;
+    try {
+      final res = await http.post(
         Uri.parse("${SecureState.serverUrl}/api/auth/token/refresh/"),
         headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"refresh": SecureState.refreshToken}),
+        body: jsonEncode({"refresh": refresh}),
       );
-
-      if (refreshRes.statusCode == 200) {
-        final data = jsonDecode(refreshRes.body);
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
         SecureState.accessToken = data["access"];
         if (data.containsKey("refresh")) {
           SecureState.refreshToken = data["refresh"];
         }
-        res = await requestFunc(SecureState.authHeader());
-      } else {
-        SecureState.logout();
+        // Persist rotated tokens so the session survives an app restart.
+        await JwtStore().saveTokens(
+          SecureState.accessToken!,
+          SecureState.refreshToken ?? refresh,
+        );
+        return true;
       }
+    } catch (_) {
+      // fall through to logout
+    }
+    SecureState.logout();
+    await JwtStore().clear();
+    return false;
+  }
+
+  static Future<http.Response> _retryWithRefresh(
+    Future<http.Response> Function(Map<String, String>) requestFunc,
+  ) async {
+    var res = await requestFunc(SecureState.authHeader());
+
+    if (res.statusCode == 401 && SecureState.refreshToken != null) {
+      final ok = await _refreshTokens();
+      if (ok) res = await requestFunc(SecureState.authHeader());
     }
 
     return res;
@@ -68,22 +97,8 @@ class AuthClient {
   static Future<http.StreamedResponse> send(http.BaseRequest request) async {
     final token = SecureState.accessToken;
     if (token != null && _isTokenExpired(token) && SecureState.refreshToken != null) {
-      final refreshRes = await http.post(
-        Uri.parse("${SecureState.serverUrl}/api/auth/token/refresh/"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"refresh": SecureState.refreshToken}),
-      );
-      if (refreshRes.statusCode == 200) {
-        final data = jsonDecode(refreshRes.body);
-        SecureState.accessToken = data["access"];
-        if (data.containsKey("refresh")) {
-          SecureState.refreshToken = data["refresh"];
-        }
-      } else {
-        SecureState.logout();
-      }
+      await _refreshTokens();
     }
-    
     request.headers.addAll(SecureState.authHeader());
     return request.send();
   }
