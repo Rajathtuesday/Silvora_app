@@ -8,6 +8,7 @@ import '../../storage/jwt_store.dart';
 import '../../services/vault_service.dart';
 import '../files/file_list_screen.dart';
 import 'register_screen.dart';
+import 'recover_screen.dart';
 import '../../theme/silvora_theme.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -127,6 +128,10 @@ class _LoginScreenState extends State<LoginScreen> {
                 TextButton(
                   onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RegisterScreen())),
                   child: const Text("Create a new private vault"),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RecoverScreen())),
+                  child: const Text("Forgot password?", style: TextStyle(color: SilvoraColors.textMuted)),
                 ),
               ],
             ),

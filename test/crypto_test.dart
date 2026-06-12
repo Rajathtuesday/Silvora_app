@@ -6,6 +6,7 @@ import 'package:silvora_app/crypto/master_key.dart';
 import 'package:silvora_app/crypto/xchacha.dart';
 import 'package:silvora_app/state/secure_state.dart';
 import 'package:silvora_app/services/vault_service.dart';
+import 'package:silvora_app/crypto/recovery_crypto.dart';
 
 void main() {
   group('Cryptography Round-Trip Tests', () {
@@ -101,6 +102,51 @@ void main() {
       // 3. Verify success
       expect(SecureState.isUnlocked, isTrue);
       expect(SecureState.masterKey, equals(masterKey));
+    });
+  });
+
+  group('Recovery phrase', () {
+    test('generates a valid 24-word phrase', () {
+      final phrase = RecoveryCrypto.generatePhrase();
+      expect(phrase.split(' ').length, equals(24));
+      expect(RecoveryCrypto.isValidPhrase(phrase), isTrue);
+      expect(RecoveryCrypto.isValidPhrase("not a real recovery phrase at all"), isFalse);
+    });
+
+    test('Recovery-KEK is deterministic for the same phrase + salt', () async {
+      final phrase = RecoveryCrypto.generatePhrase();
+      final salt = RecoveryCrypto.newSalt();
+      final k1 = await RecoveryCrypto.deriveKek(phrase, salt);
+      final k2 = await RecoveryCrypto.deriveKek(phrase, salt);
+      expect(k1, equals(k2));
+      expect(k1.length, equals(32));
+    });
+
+    test('master key round-trips through the recovery envelope', () async {
+      final masterKey = MasterKey.generate();
+      final phrase = RecoveryCrypto.generatePhrase();
+      final salt = RecoveryCrypto.newSalt();
+      final kek = await RecoveryCrypto.deriveKek(phrase, salt);
+      final nonce = await XChaCha.randomNonce();
+      final box = await XChaCha.encrypt(plaintext: masterKey, key: kek, nonce: nonce);
+
+      final recovered = await XChaCha.decrypt(
+        ciphertext: Uint8List.fromList(box.cipherText),
+        key: kek,
+        nonce: Uint8List.fromList(nonce),
+        mac: Uint8List.fromList(box.mac.bytes),
+      );
+      expect(recovered, equals(masterKey));
+    });
+
+    test('auth key is deterministic and 32 bytes', () async {
+      final phrase = RecoveryCrypto.generatePhrase();
+      final salt = RecoveryCrypto.newSalt();
+      final kek = await RecoveryCrypto.deriveKek(phrase, salt);
+      final a1 = await RecoveryCrypto.deriveAuthKey(kek);
+      final a2 = await RecoveryCrypto.deriveAuthKey(kek);
+      expect(a1, equals(a2));
+      expect(a1.length, equals(32));
     });
   });
 }

@@ -7,6 +7,7 @@ import '../../storage/jwt_store.dart';
 import '../upload/upload_screen.dart';
 import '../trash/trash_screen.dart';
 import '../login/login_screen.dart';
+import '../settings/change_password_screen.dart';
 import '../../theme/silvora_theme.dart';
 
 class FileListScreen extends StatefulWidget {
@@ -190,7 +191,7 @@ class _FileListScreenState extends State<FileListScreen> {
       await ApiService.deleteFile(fileId);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Moved to Trash (auto-purges in 30 days)")),
+        const SnackBar(content: Text("Moved to Trash (auto-purges in 7 days)")),
       );
       setState(_reloadFiles);
     } catch (e) {
@@ -360,6 +361,14 @@ class _FileListScreenState extends State<FileListScreen> {
             icon: const Icon(Icons.refresh_rounded),
             tooltip: "Refresh",
             onPressed: () => setState(_reloadFiles),
+          ),
+          IconButton(
+            icon: const Icon(Icons.key_outlined, color: SilvoraColors.textSecondary),
+            tooltip: "Change password",
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ChangePasswordScreen()),
+            ),
           ),
           IconButton(
             icon: const Icon(Icons.lock_outline, color: SilvoraColors.textSecondary),
