@@ -39,12 +39,12 @@ class _TrashScreenState extends State<TrashScreen> {
     if (deletedAt == null) return "Unknown";
     try {
       final dt = DateTime.parse(deletedAt.toString());
-      final purge = dt.add(const Duration(days: 30));
+      final purge = dt.add(const Duration(days: 7));
       final diff = purge.difference(DateTime.now()).inDays;
       if (diff <= 0) return "Expires soon";
       return "$diff days left";
     } catch (_) {
-      return "30 days";
+      return "7 days";
     }
   }
 
@@ -174,7 +174,7 @@ class _TrashScreenState extends State<TrashScreen> {
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    "Deleted files appear here for 30 days\nbefore being permanently erased.",
+                    "Deleted files appear here for 7 days\nbefore being permanently erased.",
                     textAlign: TextAlign.center,
                     style: TextStyle(color: SilvoraColors.textMuted, height: 1.5),
                   ),
@@ -196,7 +196,7 @@ class _TrashScreenState extends State<TrashScreen> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        "Files are automatically purged after 30 days. Restore to keep them.",
+                        "Files are automatically purged after 7 days. Restore to keep them.",
                         style: TextStyle(color: SilvoraColors.warn.withOpacity(0.9), fontSize: 12),
                       ),
                     ),

@@ -3,12 +3,20 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'auth_client.dart';
+import 'retry.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import '../state/secure_state.dart';
 import '../crypto/hkdf.dart';
+
+/// What the server knows about an in-flight upload when we resume it.
+class ResumeInfo {
+  final Set<int> uploaded;
+  final bool committed;
+  ResumeInfo({required this.uploaded, required this.committed});
+}
 
 class UploadService {
   static String get _baseUrl => SecureState.serverUrl;
@@ -79,7 +87,7 @@ class UploadService {
   // =============================================================
   // 2️⃣ RESUME UPLOAD
   // =============================================================
-  static Future<Set<int>?> resumeUpload(String uploadId) async {
+  static Future<ResumeInfo?> resumeUpload(String uploadId) async {
     try {
       final res = await AuthClient.get(
         _url("/file/$uploadId/resume/"),
@@ -89,7 +97,10 @@ class UploadService {
 
       final decoded = jsonDecode(res.body);
       final List<dynamic> uploaded = decoded["uploaded_indices"];
-      return uploaded.map((e) => e as int).toSet();
+      return ResumeInfo(
+        uploaded: uploaded.map((e) => e as int).toSet(),
+        committed: decoded["upload_state"] == "committed",
+      );
     } catch (_) {
       return null;
     }
@@ -105,34 +116,39 @@ class UploadService {
     required Uint8List nonce,
     required Uint8List mac,
   }) async {
+    // Use a self-describing JSON envelope to avoid platform-specific
+    // byte packing differences between Android and iOS native crypto.
+    final envelope = jsonEncode({
+      "n": base64Encode(nonce),
+      "c": base64Encode(cipherChunk),
+      "m": base64Encode(mac),
+    });
+    final body = utf8.encode(envelope);
+
     try {
-      final req = http.MultipartRequest(
-        "POST",
-        _url("/file/$uploadId/chunk/$chunkIndex/"),
+      // Absorb transient network blips: retry the send a few times with
+      // backoff before giving up (the caller then pauses for a later resume).
+      return await retry<bool>(
+        () async {
+          final req = http.MultipartRequest(
+            "POST",
+            _url("/file/$uploadId/chunk/$chunkIndex/"),
+          );
+          req.headers.addAll(_authHeaders());
+          req.files.add(
+            http.MultipartFile.fromBytes(
+              "chunk",
+              body,
+              filename: "chunk_$chunkIndex.bin",
+            ),
+          );
+          final res = await req.send();
+          return res.statusCode == 200;
+        },
+        retryIf: (ok) => !ok,
       );
-
-      req.headers.addAll(_authHeaders());
-
-      // Use a self-describing JSON envelope to avoid platform-specific
-      // byte packing differences between Android and iOS native crypto.
-      final envelope = jsonEncode({
-        "n": base64Encode(nonce),
-        "c": base64Encode(cipherChunk),
-        "m": base64Encode(mac),
-      });
-
-      req.files.add(
-        http.MultipartFile.fromBytes(
-          "chunk",
-          utf8.encode(envelope),
-          filename: "chunk_$chunkIndex.bin",
-        ),
-      );
-
-      final res = await req.send();
-      return res.statusCode == 200;
     } catch (e) {
-      debugPrint("❌ upload_chunk failed: $e");
+      debugPrint("❌ upload_chunk failed after retries: $e");
       return false;
     }
   }
@@ -144,11 +160,17 @@ class UploadService {
     required String uploadId,
   }) async {
     try {
-      final res = await AuthClient.post(  
-        _url("/file/$uploadId/commit/"), // fixed to commit route
+      // Commit is idempotent server-side (already_committed -> 200), so it's
+      // safe to retry through a flaky connection.
+      return await retry<bool>(
+        () async {
+          final res = await AuthClient.post(
+            _url("/file/$uploadId/commit/"), // fixed to commit route
+          );
+          return res.statusCode == 200;
+        },
+        retryIf: (ok) => !ok,
       );
-
-      return res.statusCode == 200;
     } catch (_) {
       return false;
     }

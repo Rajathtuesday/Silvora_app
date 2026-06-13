@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../../services/api_services.dart';
 import '../../services/download_service.dart';
+import '../../services/downloads_store.dart';
 import '../../state/secure_state.dart';
 import '../../storage/jwt_store.dart';
 import '../upload/upload_screen.dart';
+import '../downloads/downloads_screen.dart';
 import '../trash/trash_screen.dart';
 import '../login/login_screen.dart';
 import '../settings/change_password_screen.dart';
@@ -248,14 +250,10 @@ class _FileListScreenState extends State<FileListScreen> {
                 TextButton(
                   onPressed: () async {
                     final nav = Navigator.of(c);
-                    final messenger = ScaffoldMessenger.of(context);
-                    final path = await DownloadService.saveToDevice(result!);
+                    await _saveToLibrary(result!, filename);
                     nav.pop();
-                    messenger.showSnackBar(
-                      SnackBar(content: Text("Saved to: $path")),
-                    );
                   },
-                  child: const Text("Save to Device", style: TextStyle(color: SilvoraColors.primaryLight)),
+                  child: const Text("Save", style: TextStyle(color: SilvoraColors.primaryLight)),
                 ),
               ],
             ),
@@ -293,30 +291,12 @@ class _FileListScreenState extends State<FileListScreen> {
             ),
           );
         } else {
-          // Not previewable — auto-save instead
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Preview not available for this file type. Saving to device..."),
-            ),
-          );
-          final path = await DownloadService.saveToDevice(result);
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text("Saved to: $path")),
-            );
-          }
+          // Not previewable — add it to the Downloads library instead.
+          await _saveToLibrary(result, filename);
         }
       } else {
-        // ── Save to device ──
-        final path = await DownloadService.saveToDevice(result);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text("✅ Saved: $path"),
-              action: SnackBarAction(label: "OK", onPressed: () {}),
-            ),
-          );
-        }
+        // ── Add to the in-app Downloads library ──
+        await _saveToLibrary(result, filename);
       }
     } catch (e) {
       if (!mounted) return;
@@ -338,6 +318,39 @@ class _FileListScreenState extends State<FileListScreen> {
     }
   }
 
+  // Copy a freshly decrypted file into the in-app Downloads library and offer
+  // to open it immediately (WhatsApp-style). The library keeps a persistent
+  // copy, so it survives the temp-file wipe in the caller's finally block.
+  Future<void> _saveToLibrary(DecryptedFileResult result, String filename) async {
+    final item = await DownloadsStore.add(
+      source: result.file,
+      filename: filename,
+      mime: result.mimeType,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text("Saved to Downloads — ${item.filename}"),
+        action: SnackBarAction(label: "OPEN", onPressed: () => DownloadsStore.open(item)),
+        duration: const Duration(seconds: 5),
+      ),
+    );
+  }
+
+  PopupMenuItem<String> _menuItem(String value, IconData icon, String label, {bool danger = false}) {
+    final color = danger ? SilvoraColors.error : SilvoraColors.textPrimary;
+    return PopupMenuItem<String>(
+      value: value,
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: danger ? SilvoraColors.error : SilvoraColors.textSecondary),
+          const SizedBox(width: 14),
+          Text(label, style: TextStyle(color: color)),
+        ],
+      ),
+    );
+  }
+
   // ─── Build ────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
@@ -347,35 +360,49 @@ class _FileListScreenState extends State<FileListScreen> {
         leading: const Icon(Icons.shield_outlined, color: SilvoraColors.primary),
         actions: [
           IconButton(
-            icon: const Icon(Icons.delete_outline, color: SilvoraColors.textSecondary),
-            tooltip: "Trash",
-            onPressed: () async {
-              await Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const TrashScreen()),
-              );
-              setState(_reloadFiles); // Refresh vault after returning from trash
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            tooltip: "Refresh",
-            onPressed: () => setState(_reloadFiles),
-          ),
-          IconButton(
-            icon: const Icon(Icons.key_outlined, color: SilvoraColors.textSecondary),
-            tooltip: "Change password",
+            icon: const Icon(Icons.download_done_outlined, color: SilvoraColors.textSecondary),
+            tooltip: "Downloads",
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const ChangePasswordScreen()),
+              MaterialPageRoute(builder: (_) => const DownloadsScreen()),
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.lock_outline, color: SilvoraColors.textSecondary),
-            tooltip: "Lock & sign out",
-            onPressed: _logout,
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: SilvoraColors.textSecondary),
+            color: SilvoraColors.card2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            onSelected: (value) async {
+              switch (value) {
+                case "trash":
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const TrashScreen()),
+                  );
+                  setState(_reloadFiles);
+                  break;
+                case "refresh":
+                  setState(_reloadFiles);
+                  break;
+                case "password":
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ChangePasswordScreen()),
+                  );
+                  break;
+                case "logout":
+                  _logout();
+                  break;
+              }
+            },
+            itemBuilder: (_) => [
+              _menuItem("trash", Icons.delete_outline, "Trash"),
+              _menuItem("refresh", Icons.refresh_rounded, "Refresh"),
+              _menuItem("password", Icons.key_outlined, "Change password"),
+              const PopupMenuDivider(),
+              _menuItem("logout", Icons.lock_outline, "Lock & sign out", danger: true),
+            ],
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 4),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(

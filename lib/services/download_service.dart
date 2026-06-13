@@ -9,6 +9,7 @@ import '../state/secure_state.dart';
 import '../crypto/hkdf.dart';
 import '../crypto/file_decryptor.dart';
 import 'auth_client.dart';
+import 'integrity_service.dart';
 
 class DecryptedFileResult {
   final File file;
@@ -78,12 +79,16 @@ class DownloadService {
     }
     chunksMeta.sort((a, b) => (a["index"] as int).compareTo(b["index"] as int));
 
-    // ── 3. Derive file-specific encryption key ────────────────────
+    // ── 3. Fetch the client-signed integrity manifest (null = legacy file) ──
+    final integrity = await IntegrityService.fetch(fileId);
+
+    // ── 4. Derive file-specific encryption key ────────────────────
     final secretKey = await _deriveFileKey(fileId);
     final file = await FileDecryptor.decryptFile(
       chunksMeta: chunksMeta,
       secretKey: secretKey,
       filename: filename,
+      expectedHashes: integrity?.hashes,
       fetchChunk: (index) async {
         final chunkRes = await AuthClient.get(
           _url("/download/file/$fileId/chunk/$index/"),

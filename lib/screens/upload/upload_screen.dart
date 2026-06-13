@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../services/upload_service.dart';
+import '../../services/integrity_service.dart';
 import '../files/file_list_screen.dart';
 import '../../state/secure_state.dart';
 import '../../crypto/hkdf.dart';
@@ -82,6 +83,12 @@ class _UploadScreenState extends State<UploadScreen> {
     }
   }
 
+  Future<void> _clearPending() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove("active_upload_id");
+    await prefs.remove("active_upload_path");
+  }
+
   void _showSnack(String msg, {bool isError = false}) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -148,7 +155,19 @@ class _UploadScreenState extends State<UploadScreen> {
       await prefs.setString("active_upload_path", file.path);
     }
 
-    final uploadedChunks = await UploadService.resumeUpload(uploadId) ?? {};
+    final resumeInfo = await UploadService.resumeUpload(uploadId);
+
+    // App was killed after commit but before we cleared the pending marker:
+    // the file is already safe on the server, so just finish cleanly.
+    if (resumeInfo != null && resumeInfo.committed) {
+      await _clearPending();
+      if (!mounted) return;
+      _showSnack("Upload already completed.");
+      Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const FileListScreen()));
+      return;
+    }
+
+    final uploadedChunks = resumeInfo?.uploaded ?? <int>{};
     final totalChunks    = (fileLen / chunkSize).ceil();
     final raf = await file.open();
 
@@ -198,11 +217,30 @@ class _UploadScreenState extends State<UploadScreen> {
     }
 
     await raf.close();
-    await UploadService.finishUpload(uploadId: uploadId);
 
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove("active_upload_id");
-    await prefs.remove("active_upload_path");
+    // Build + upload the client-signed integrity manifest BEFORE commit. The
+    // server refuses to commit a file without it, so download is always
+    // verifiable end to end. Hashes are read from the source file, so this is
+    // resume-safe even if some chunks were uploaded in an earlier session.
+    final integrityOk = await IntegrityService.buildAndUpload(
+      fileId: uploadId,
+      file: file,
+      chunkSize: chunkSize,
+    );
+    if (!integrityOk) {
+      setState(() => _isUploading = false);
+      _showSnack("Couldn't seal the file's integrity manifest. Will retry on resume.", isError: true);
+      return;
+    }
+
+    final committed = await UploadService.finishUpload(uploadId: uploadId);
+    if (!committed) {
+      setState(() => _isUploading = false);
+      _showSnack("Final commit failed. Will resume on next attempt.", isError: true);
+      return;
+    }
+
+    await _clearPending();
 
     if (!mounted) return;
     _showSnack("Vault encrypted and synchronized!");

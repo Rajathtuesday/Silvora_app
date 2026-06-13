@@ -17,10 +17,12 @@ class SilvoraApp extends StatefulWidget {
 }
 
 class _SilvoraAppState extends State<SilvoraApp> with WidgetsBindingObserver {
-  // Auto-lock: if the app stays backgrounded longer than this, the in-memory
-  // master key is wiped and the user must re-enter their password. Protects an
-  // unlocked vault on a lost or borrowed phone.
-  static const Duration _autoLockAfter = Duration(minutes: 2);
+  // Auto-lock: if the app stays backgrounded (or the screen is off) longer than
+  // this, the in-memory master key is wiped and the user must re-enter their
+  // password. Protects an unlocked vault on a lost or borrowed phone. The short
+  // grace tolerates brief app-switches (file picker, share sheet) without
+  // locking mid-flow.
+  static const Duration _autoLockAfter = Duration(minutes: 1);
 
   final GlobalKey<NavigatorState> _navKey = GlobalKey<NavigatorState>();
   DateTime? _backgroundedAt;
