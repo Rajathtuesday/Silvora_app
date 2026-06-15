@@ -1,4 +1,4 @@
-package com.example.silvora_app
+package cloud.silvora.app
 
 import android.content.ContentValues
 import android.os.Build
