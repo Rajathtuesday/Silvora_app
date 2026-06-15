@@ -138,8 +138,11 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
             ListTile(
               leading: const Icon(Icons.save_alt, color: SilvoraColors.primaryLight),
               title: const Text("Save to phone", style: TextStyle(color: SilvoraColors.textPrimary)),
-              subtitle: const Text("Copy to your public Downloads/Silvora folder",
-                  style: TextStyle(color: SilvoraColors.textMuted, fontSize: 12)),
+              subtitle: Text(
+                  Platform.isAndroid
+                      ? "Copy to your public Downloads/Silvora folder"
+                      : "Save to Files or Photos via the share sheet",
+                  style: const TextStyle(color: SilvoraColors.textMuted, fontSize: 12)),
               onTap: () { Navigator.pop(ctx); _saveToPhone(item); },
             ),
             ListTile(

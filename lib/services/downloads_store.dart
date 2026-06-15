@@ -133,7 +133,15 @@ class DownloadsStore {
 
   /// Push a copy into the public Downloads/Silvora folder (visible in Files /
   /// Gallery). Returns a human-readable location.
+  ///
+  /// Android uses the native MediaStore channel. iOS has no equivalent
+  /// "public Downloads" folder, so it falls back to the share sheet, which
+  /// lets the user save to Photos/Files themselves.
   static Future<String> saveToPhone(DownloadedItem item) async {
+    if (!Platform.isAndroid) {
+      await share(item);
+      return "Files or Photos (via share sheet)";
+    }
     final bytes = await File(item.path).readAsBytes();
     final res = await _channel.invokeMethod<String>("saveToDownloads", {
       "bytes": Uint8List.fromList(bytes),
