@@ -85,6 +85,26 @@ class ApiService {
   }
 
   // ===============================
+  // ACCOUNT DELETION
+  // ===============================
+  static Future<void> deleteAccount(String password) async {
+    final res = await AuthClient.post(
+      _url("/api/auth/account/delete/"),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({"password": password}),
+    );
+
+    if (res.statusCode != 200) {
+      String message = "Failed to delete account";
+      try {
+        final data = jsonDecode(res.body);
+        if (data["error"] != null) message = data["error"];
+      } catch (_) {}
+      throw Exception(message);
+    }
+  }
+
+  // ===============================
   // DELETE FILE (TRASH)
   // ===============================
   static Future<void> deleteFile(String fileId) async {

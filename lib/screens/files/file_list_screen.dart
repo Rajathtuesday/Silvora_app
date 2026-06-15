@@ -10,6 +10,7 @@ import '../downloads/downloads_screen.dart';
 import '../trash/trash_screen.dart';
 import '../login/login_screen.dart';
 import '../settings/change_password_screen.dart';
+import '../settings/delete_account_screen.dart';
 import '../../theme/silvora_theme.dart';
 
 class FileListScreen extends StatefulWidget {
@@ -445,6 +446,12 @@ class _FileListScreenState extends State<FileListScreen> {
                     MaterialPageRoute(builder: (_) => const ChangePasswordScreen()),
                   );
                   break;
+                case "delete_account":
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const DeleteAccountScreen()),
+                  );
+                  break;
                 case "logout":
                   _logout();
                   break;
@@ -455,6 +462,7 @@ class _FileListScreenState extends State<FileListScreen> {
               _menuItem("refresh", Icons.refresh_rounded, "Refresh"),
               _menuItem("password", Icons.key_outlined, "Change password"),
               const PopupMenuDivider(),
+              _menuItem("delete_account", Icons.delete_forever_outlined, "Delete account", danger: true),
               _menuItem("logout", Icons.lock_outline, "Lock & sign out", danger: true),
             ],
           ),
