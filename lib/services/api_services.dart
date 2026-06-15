@@ -70,6 +70,21 @@ class ApiService {
   }
 
   // ===============================
+  // STORAGE QUOTA (this user's usage)
+  // ===============================
+  static Future<Map<String, int>> getQuota() async {
+    final res = await AuthClient.get(_url("/quota/"));
+    if (res.statusCode != 200) {
+      throw Exception("Failed to fetch quota");
+    }
+    final data = jsonDecode(res.body);
+    return {
+      "used": (data["used_bytes"] as num).toInt(),
+      "limit": (data["limit_bytes"] as num).toInt(),
+    };
+  }
+
+  // ===============================
   // DELETE FILE (TRASH)
   // ===============================
   static Future<void> deleteFile(String fileId) async {

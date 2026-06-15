@@ -21,6 +21,7 @@ class FileListScreen extends StatefulWidget {
 
 class _FileListScreenState extends State<FileListScreen> {
   late Future<List<dynamic>> _filesFuture;
+  Future<Map<String, int>>? _quotaFuture;
   bool _isDownloading = false;
 
   @override
@@ -31,6 +32,7 @@ class _FileListScreenState extends State<FileListScreen> {
 
   void _reloadFiles() {
     _filesFuture = ApiService.listFiles();
+    _quotaFuture = ApiService.getQuota();
   }
 
   Future<void> _logout() async {
@@ -337,6 +339,60 @@ class _FileListScreenState extends State<FileListScreen> {
     );
   }
 
+  // A slim storage-usage bar at the top of the vault: "X of Y used".
+  Widget _buildUsageCard() {
+    return FutureBuilder<Map<String, int>>(
+      future: _quotaFuture,
+      builder: (ctx, snap) {
+        if (!snap.hasData) return const SizedBox.shrink();
+        final used = snap.data!["used"] ?? 0;
+        final limit = snap.data!["limit"] ?? 0;
+        final frac = limit > 0 ? (used / limit).clamp(0.0, 1.0) : 0.0;
+        final color = frac < 0.75
+            ? SilvoraColors.primary
+            : (frac < 0.9 ? SilvoraColors.warn : SilvoraColors.error);
+        return Container(
+          margin: const EdgeInsets.fromLTRB(16, 14, 16, 2),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          decoration: BoxDecoration(
+            color: SilvoraColors.card,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: SilvoraColors.border),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.cloud_outlined, size: 18, color: SilvoraColors.primaryLight),
+                  const SizedBox(width: 8),
+                  const Text("Storage",
+                      style: TextStyle(color: SilvoraColors.textSecondary, fontWeight: FontWeight.w600, fontSize: 13)),
+                  const Spacer(),
+                  Text("${(frac * 100).toStringAsFixed(0)}%",
+                      style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 13)),
+                ],
+              ),
+              const SizedBox(height: 10),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: LinearProgressIndicator(
+                  value: frac,
+                  minHeight: 8,
+                  backgroundColor: SilvoraColors.surface,
+                  valueColor: AlwaysStoppedAnimation<Color>(color),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text("${_formatBytes(used)} of ${_formatBytes(limit)} used",
+                  style: const TextStyle(color: SilvoraColors.textMuted, fontSize: 12)),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   PopupMenuItem<String> _menuItem(String value, IconData icon, String label, {bool danger = false}) {
     final color = danger ? SilvoraColors.error : SilvoraColors.textPrimary;
     return PopupMenuItem<String>(
@@ -413,7 +469,11 @@ class _FileListScreenState extends State<FileListScreen> {
       ),
       body: Stack(
         children: [
-          FutureBuilder<List<dynamic>>(
+          Column(
+            children: [
+              _buildUsageCard(),
+              Expanded(
+                child: FutureBuilder<List<dynamic>>(
             future: _filesFuture,
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
@@ -523,6 +583,9 @@ class _FileListScreenState extends State<FileListScreen> {
                 ),
               );
             },
+                ),
+              ),
+            ],
           ),
 
           // ── Decrypt overlay ──────────────────────────────────
