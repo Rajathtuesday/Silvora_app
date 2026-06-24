@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../services/vault_service.dart';
+import '../../services/api_services.dart';
 import '../../state/secure_state.dart';
 import '../../storage/jwt_store.dart';
 import '../files/file_list_screen.dart';
@@ -39,6 +40,8 @@ class _UnlockScreenState extends State<UnlockScreen> {
 
     try {
       await VaultService.unlock(password);
+      // Best-effort — never blocks unlock if it fails (non-blocking design).
+      await ApiService.fetchCurrentUser();
       if (!mounted) return;
       Navigator.pushReplacement(
         context,

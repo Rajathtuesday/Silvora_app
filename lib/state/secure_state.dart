@@ -20,6 +20,12 @@ class SecureState {
   static String? accessToken;
   static String? refreshToken;
 
+  // =========================================================
+  // USER PROFILE (fetched from /api/auth/me/ after login/unlock)
+  // =========================================================
+  static String? userEmail;
+  static bool emailVerified = false;
+
   static Map<String, String> authHeader() {
     if (accessToken == null) return {};
     return {
@@ -64,5 +70,7 @@ class SecureState {
     lock();
     accessToken = null;
     refreshToken = null;
+    userEmail = null;
+    emailVerified = false;
   }
 }

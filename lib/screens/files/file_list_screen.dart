@@ -11,6 +11,7 @@ import '../trash/trash_screen.dart';
 import '../login/login_screen.dart';
 import '../settings/change_password_screen.dart';
 import '../settings/delete_account_screen.dart';
+import '../billing/billing_screen.dart';
 import '../../theme/silvora_theme.dart';
 
 class FileListScreen extends StatefulWidget {
@@ -22,8 +23,14 @@ class FileListScreen extends StatefulWidget {
 
 class _FileListScreenState extends State<FileListScreen> {
   late Future<List<dynamic>> _filesFuture;
-  Future<Map<String, int>>? _quotaFuture;
+  Future<Map<String, dynamic>>? _quotaFuture;
   bool _isDownloading = false;
+
+  // Verification is non-blocking — dismissing just hides the banner for this
+  // session. Deliberately not persisted: still-unverified is worth
+  // resurfacing on the next cold start, not nagged away permanently.
+  bool _emailBannerDismissed = false;
+  bool _resendingVerification = false;
 
   @override
   void initState() {
@@ -340,14 +347,66 @@ class _FileListScreenState extends State<FileListScreen> {
     );
   }
 
+  Future<void> _resendVerification() async {
+    setState(() => _resendingVerification = true);
+    final message = await ApiService.resendVerificationEmail();
+    if (!mounted) return;
+    setState(() => _resendingVerification = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  // Non-blocking reminder, not a gate — recovery already works without
+  // email, so this is purely a "please verify when convenient" nudge.
+  Widget _buildVerificationBanner() {
+    if (SecureState.emailVerified || _emailBannerDismissed) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: SilvoraColors.warn.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: SilvoraColors.warn.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.mark_email_unread_outlined, color: SilvoraColors.warn, size: 18),
+          const SizedBox(width: 10),
+          const Expanded(
+            child: Text(
+              "Please verify your email. Your vault works fine either way.",
+              style: TextStyle(color: SilvoraColors.warn, fontSize: 13),
+            ),
+          ),
+          _resendingVerification
+              ? const SizedBox(
+                  width: 16, height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: SilvoraColors.warn),
+                )
+              : TextButton(
+                  onPressed: _resendVerification,
+                  child: const Text("Resend", style: TextStyle(color: SilvoraColors.warn, fontWeight: FontWeight.w700)),
+                ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 16, color: SilvoraColors.warn),
+            onPressed: () => setState(() => _emailBannerDismissed = true),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ],
+      ),
+    );
+  }
+
   // A slim storage-usage bar at the top of the vault: "X of Y used".
   Widget _buildUsageCard() {
-    return FutureBuilder<Map<String, int>>(
+    return FutureBuilder<Map<String, dynamic>>(
       future: _quotaFuture,
       builder: (ctx, snap) {
         if (!snap.hasData) return const SizedBox.shrink();
-        final used = snap.data!["used"] ?? 0;
-        final limit = snap.data!["limit"] ?? 0;
+        final used = snap.data!["used"] as int? ?? 0;
+        final limit = snap.data!["limit"] as int? ?? 0;
         final frac = limit > 0 ? (used / limit).clamp(0.0, 1.0) : 0.0;
         final color = frac < 0.75
             ? SilvoraColors.primary
@@ -446,6 +505,12 @@ class _FileListScreenState extends State<FileListScreen> {
                     MaterialPageRoute(builder: (_) => const ChangePasswordScreen()),
                   );
                   break;
+                case "billing":
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const BillingScreen()),
+                  ).then((_) => setState(_reloadFiles)); // tier may have changed
+                  break;
                 case "delete_account":
                   Navigator.push(
                     context,
@@ -461,6 +526,7 @@ class _FileListScreenState extends State<FileListScreen> {
               _menuItem("trash", Icons.delete_outline, "Trash"),
               _menuItem("refresh", Icons.refresh_rounded, "Refresh"),
               _menuItem("password", Icons.key_outlined, "Change password"),
+              _menuItem("billing", Icons.workspace_premium_outlined, "Manage subscription"),
               const PopupMenuDivider(),
               _menuItem("delete_account", Icons.delete_forever_outlined, "Delete account", danger: true),
               _menuItem("logout", Icons.lock_outline, "Lock & sign out", danger: true),
@@ -479,6 +545,7 @@ class _FileListScreenState extends State<FileListScreen> {
         children: [
           Column(
             children: [
+              _buildVerificationBanner(),
               _buildUsageCard(),
               Expanded(
                 child: FutureBuilder<List<dynamic>>(

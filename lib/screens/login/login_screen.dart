@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../../state/secure_state.dart';
 import '../../storage/jwt_store.dart';
 import '../../services/vault_service.dart';
+import '../../services/api_services.dart';
 import '../files/file_list_screen.dart';
 import 'register_screen.dart';
 import 'recover_screen.dart';
@@ -75,6 +76,9 @@ class _LoginScreenState extends State<LoginScreen> {
         setState(() => _errorMessage = "Failed to unlock vault. Check your password.");
         return;
       }
+
+      // Best-effort — never blocks login if it fails (non-blocking design).
+      await ApiService.fetchCurrentUser();
 
       if (!mounted) return;
       Navigator.pushReplacement(

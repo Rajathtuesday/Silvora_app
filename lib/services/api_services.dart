@@ -72,7 +72,7 @@ class ApiService {
   // ===============================
   // STORAGE QUOTA (this user's usage)
   // ===============================
-  static Future<Map<String, int>> getQuota() async {
+  static Future<Map<String, dynamic>> getQuota() async {
     final res = await AuthClient.get(_url("/quota/"));
     if (res.statusCode != 200) {
       throw Exception("Failed to fetch quota");
@@ -81,6 +81,64 @@ class ApiService {
     return {
       "used": (data["used_bytes"] as num).toInt(),
       "limit": (data["limit_bytes"] as num).toInt(),
+      "tier": data["tier"] as String?,
+    };
+  }
+
+  // ===============================
+  // CURRENT USER PROFILE (email verification state)
+  // ===============================
+  static Future<void> fetchCurrentUser() async {
+    final res = await AuthClient.get(_url("/api/auth/me/"));
+    if (res.statusCode != 200) {
+      // Non-blocking by design — a failed fetch here must never block
+      // login/unlock. Leave SecureState's profile fields at their defaults
+      // and let the next successful fetch (e.g. next app open) catch up.
+      return;
+    }
+    final data = jsonDecode(res.body);
+    SecureState.userEmail = data["email"] as String?;
+    SecureState.emailVerified = data["email_verified"] == true;
+  }
+
+  // ===============================
+  // EMAIL VERIFICATION — resend
+  // ===============================
+  /// Returns a user-facing message from the backend response (success or
+  /// error) — the backend already returns friendly text, no need to invent
+  /// new copy here.
+  static Future<String> resendVerificationEmail() async {
+    final res = await AuthClient.post(_url("/api/auth/resend-verification/"));
+    final data = jsonDecode(res.body);
+    if (res.statusCode != 200) {
+      return data["error"] as String? ?? "Could not send verification email.";
+    }
+    if (data["status"] == "already_verified") {
+      return "Your email is already verified.";
+    }
+    return "Verification email sent — check your inbox.";
+  }
+
+  // ===============================
+  // BILLING — create a subscription
+  // ===============================
+  /// tier: "pro" | "enterprise". interval: "monthly" | "yearly".
+  /// Returns {subscription_id, razorpay_key_id} for the checkout SDK — the
+  /// actual tier upgrade happens server-side via Razorpay's webhook, not
+  /// from this response.
+  static Future<Map<String, String>> createSubscription(String tier, String interval) async {
+    final res = await AuthClient.post(
+      _url("/api/billing/subscribe/"),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({"tier": tier, "interval": interval}),
+    );
+    final data = jsonDecode(res.body);
+    if (res.statusCode != 201) {
+      throw Exception(data["error"] as String? ?? "Could not start subscription.");
+    }
+    return {
+      "subscription_id": data["subscription_id"] as String,
+      "razorpay_key_id": data["razorpay_key_id"] as String,
     };
   }
 
