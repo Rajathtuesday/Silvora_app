@@ -21,7 +21,7 @@ class FileListScreen extends StatefulWidget {
   State<FileListScreen> createState() => _FileListScreenState();
 }
 
-class _FileListScreenState extends State<FileListScreen> {
+class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObserver {
   late Future<List<dynamic>> _filesFuture;
   Future<Map<String, dynamic>>? _quotaFuture;
   bool _isDownloading = false;
@@ -35,7 +35,29 @@ class _FileListScreenState extends State<FileListScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _reloadFiles();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // The most common path to verifying email is: tap the link in the
+    // email app, then switch back here. Re-check on resume so the banner
+    // clears itself instead of needing a fresh login to notice.
+    if (state == AppLifecycleState.resumed && !SecureState.emailVerified) {
+      ApiService.fetchCurrentUser().then((_) {
+        if (mounted) setState(() {});
+      }).catchError((_) {
+        // Offline or a transient network hiccup on resume — harmless, the
+        // banner just stays as-is until the next successful check.
+      });
+    }
   }
 
   void _reloadFiles() {
