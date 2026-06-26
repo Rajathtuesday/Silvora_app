@@ -622,20 +622,45 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: _isSearching
-            ? TextField(
-                controller: _searchController,
-                autofocus: true,
-                style: const TextStyle(color: SilvoraColors.textPrimary, fontSize: 16),
-                decoration: const InputDecoration(
-                  hintText: "Search files…",
-                  hintStyle: TextStyle(color: SilvoraColors.textMuted),
-                  border: InputBorder.none,
-                  isDense: true,
-                ),
-                onChanged: (v) => setState(() => _searchQuery = v),
-              )
-            : const Text("My Vault"),
+        titleSpacing: _isSearching ? 0 : null,
+        title: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          child: _isSearching
+              ? Container(
+                  key: const ValueKey("search"),
+                  height: 42,
+                  margin: const EdgeInsets.only(right: 8),
+                  decoration: BoxDecoration(
+                    color: SilvoraColors.surface,
+                    borderRadius: BorderRadius.circular(21),
+                    border: Border.all(color: SilvoraColors.borderFocus),
+                  ),
+                  child: TextField(
+                    controller: _searchController,
+                    autofocus: true,
+                    style: const TextStyle(color: SilvoraColors.textPrimary, fontSize: 15),
+                    decoration: InputDecoration(
+                      hintText: "Search files…",
+                      hintStyle: const TextStyle(color: SilvoraColors.textMuted),
+                      prefixIcon: const Icon(Icons.search, color: SilvoraColors.textMuted, size: 20),
+                      suffixIcon: _searchQuery.isEmpty
+                          ? null
+                          : IconButton(
+                              icon: const Icon(Icons.close, color: SilvoraColors.textMuted, size: 18),
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() => _searchQuery = "");
+                              },
+                            ),
+                      border: InputBorder.none,
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                    ),
+                    onChanged: (v) => setState(() => _searchQuery = v),
+                  ),
+                )
+              : const Text("My Vault", key: ValueKey("title")),
+        ),
         leading: _isSearching
             ? IconButton(
                 icon: const Icon(Icons.arrow_back, color: SilvoraColors.textSecondary),
@@ -785,9 +810,18 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
 
               if (files.isEmpty) {
                 return Center(
-                  child: Text(
-                    'No files matching "$_searchQuery"',
-                    style: const TextStyle(color: SilvoraColors.textMuted),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.search_off_rounded, size: 64, color: Colors.white.withValues(alpha: 0.08)),
+                      const SizedBox(height: 16),
+                      const Text("No matches", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: SilvoraColors.textSecondary)),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Nothing found for "$_searchQuery"',
+                        style: const TextStyle(color: SilvoraColors.textMuted),
+                      ),
+                    ],
                   ),
                 );
               }
