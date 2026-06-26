@@ -26,6 +26,10 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
   Future<Map<String, dynamic>>? _quotaFuture;
   bool _isDownloading = false;
 
+  bool _isSearching = false;
+  String _searchQuery = "";
+  final TextEditingController _searchController = TextEditingController();
+
   // Verification is non-blocking — dismissing just hides the banner for this
   // session. Deliberately not persisted: still-unverified is worth
   // resurfacing on the next cold start, not nagged away permanently.
@@ -42,6 +46,7 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -204,6 +209,14 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
                 },
               ),
               ListTile(
+                leading: const Icon(Icons.edit_outlined, color: SilvoraColors.primaryLight),
+                title: const Text("Rename", style: TextStyle(color: SilvoraColors.textPrimary)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showRenameDialog(f);
+                },
+              ),
+              ListTile(
                 leading: const Icon(Icons.delete_outline, color: SilvoraColors.error),
                 title: const Text("Move to Trash", style: TextStyle(color: SilvoraColors.error)),
                 onTap: () async {
@@ -217,6 +230,66 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
         );
       },
     );
+  }
+
+  // ─── Rename ───────────────────────────────────────────────────
+  // The extension is locked deliberately — it's what tells the app (and
+  // the OS, on download) how to handle the file; letting someone rename
+  // "photo.jpg" to "photo.pdf" wouldn't convert anything, just mislabel it.
+  Future<void> _showRenameDialog(Map<String, dynamic> f) async {
+    final currentName = (f["filename"] as String?) ?? "Encrypted File";
+    final dotIndex = currentName.lastIndexOf(".");
+    final hasExtension = dotIndex > 0 && dotIndex < currentName.length - 1;
+    final baseName = hasExtension ? currentName.substring(0, dotIndex) : currentName;
+    final extension = hasExtension ? currentName.substring(dotIndex) : "";
+
+    final controller = TextEditingController(text: baseName);
+    final newBase = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: SilvoraColors.card2,
+        title: const Text("Rename file", style: TextStyle(color: SilvoraColors.textPrimary)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(color: SilvoraColors.textPrimary),
+          decoration: InputDecoration(
+            suffixText: extension,
+            suffixStyle: const TextStyle(color: SilvoraColors.textMuted),
+            helperText: extension.isEmpty ? null : "Extension can't be changed",
+            helperStyle: const TextStyle(color: SilvoraColors.textMuted, fontSize: 11),
+          ),
+          onSubmitted: (v) => Navigator.pop(ctx, v),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Cancel", style: TextStyle(color: SilvoraColors.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text("Rename", style: TextStyle(color: SilvoraColors.primaryLight)),
+          ),
+        ],
+      ),
+    );
+
+    if (newBase == null || newBase.trim().isEmpty || newBase.trim() == baseName) return;
+
+    final newFilename = "${newBase.trim()}$extension";
+    try {
+      await ApiService.renameFile(f["file_id"] as String, newFilename);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Renamed to $newFilename")),
+      );
+      setState(_reloadFiles);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Rename failed: $e"), backgroundColor: SilvoraColors.error),
+      );
+    }
   }
 
   // ─── Trash ────────────────────────────────────────────────────
@@ -549,9 +622,37 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("My Vault"),
-        leading: const Icon(Icons.shield_outlined, color: SilvoraColors.primary),
+        title: _isSearching
+            ? TextField(
+                controller: _searchController,
+                autofocus: true,
+                style: const TextStyle(color: SilvoraColors.textPrimary, fontSize: 16),
+                decoration: const InputDecoration(
+                  hintText: "Search files…",
+                  hintStyle: TextStyle(color: SilvoraColors.textMuted),
+                  border: InputBorder.none,
+                  isDense: true,
+                ),
+                onChanged: (v) => setState(() => _searchQuery = v),
+              )
+            : const Text("My Vault"),
+        leading: _isSearching
+            ? IconButton(
+                icon: const Icon(Icons.arrow_back, color: SilvoraColors.textSecondary),
+                onPressed: () => setState(() {
+                  _isSearching = false;
+                  _searchQuery = "";
+                  _searchController.clear();
+                }),
+              )
+            : const Icon(Icons.shield_outlined, color: SilvoraColors.primary),
         actions: [
+          if (!_isSearching)
+            IconButton(
+              icon: const Icon(Icons.search, color: SilvoraColors.textSecondary),
+              tooltip: "Search",
+              onPressed: () => setState(() => _isSearching = true),
+            ),
           IconButton(
             icon: const Icon(Icons.download_done_outlined, color: SilvoraColors.textSecondary),
             tooltip: "Downloads",
@@ -654,8 +755,8 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
                 );
               }
 
-              final files = snapshot.data!;
-              if (files.isEmpty) {
+              final allFiles = snapshot.data!;
+              if (allFiles.isEmpty) {
                 return Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -670,6 +771,23 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
                         style: TextStyle(color: SilvoraColors.textMuted, height: 1.5),
                       ),
                     ],
+                  ),
+                );
+              }
+
+              final query = _searchQuery.trim().toLowerCase();
+              final files = query.isEmpty
+                  ? allFiles
+                  : allFiles.where((f) {
+                      final name = ((f as Map<String, dynamic>)["filename"] as String? ?? "").toLowerCase();
+                      return name.contains(query);
+                    }).toList();
+
+              if (files.isEmpty) {
+                return Center(
+                  child: Text(
+                    'No files matching "$_searchQuery"',
+                    style: const TextStyle(color: SilvoraColors.textMuted),
                   ),
                 );
               }

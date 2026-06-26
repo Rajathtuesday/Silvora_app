@@ -89,6 +89,47 @@ class ApiService {
   }
 
   // ===============================
+  // RENAME FILE
+  // ===============================
+  // Re-encrypts the filename under the exact same per-file key used at
+  // upload time (derived from file_id, via listFiles' same scheme) and
+  // sends the new ciphertext — the server only ever sees opaque bytes,
+  // same zero-knowledge guarantee as upload.
+  static Future<void> renameFile(String fileId, String newFilename) async {
+    final nameKeyBytes = await hkdfSha256(
+      ikm: SecureState.masterKey,
+      info: utf8.encode("silvora_filename_$fileId"),
+    );
+
+    final algo = Xchacha20.poly1305Aead();
+    final secretKey = SecretKey(nameKeyBytes);
+    final nonce = await algo.newNonce();
+
+    final box = await algo.encrypt(
+      utf8.encode(newFilename),
+      secretKey: secretKey,
+      nonce: nonce,
+    );
+
+    final res = await AuthClient.post(
+      _url("/file/$fileId/rename/"),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({
+        "filename_ciphertext": _bytesToHex(box.cipherText),
+        "filename_nonce": _bytesToHex(nonce),
+        "filename_mac": _bytesToHex(box.mac.bytes),
+      }),
+    );
+
+    if (res.statusCode != 200) {
+      throw Exception("Failed to rename file");
+    }
+  }
+
+  static String _bytesToHex(List<int> bytes) =>
+      bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+
+  // ===============================
   // CURRENT USER PROFILE (email verification state)
   // ===============================
   static Future<void> fetchCurrentUser() async {
