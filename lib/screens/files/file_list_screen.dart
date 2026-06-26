@@ -421,6 +421,61 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
     );
   }
 
+  // Persistent (not dismissible) — real consequences on a real clock, unlike
+  // the email-verification nudge. Two phases, told apart by which field the
+  // server still has set: graceEndsAt present = still on the paid limit,
+  // about to downgrade; purgeAt present (graceEndsAt already cleared) =
+  // already downgraded, files beyond 1GB get deleted when purgeAt arrives.
+  Widget _buildGracePeriodBanner() {
+    return FutureBuilder<Map<String, dynamic>>(
+      future: _quotaFuture,
+      builder: (ctx, snap) {
+        final data = snap.data;
+        if (data == null) return const SizedBox.shrink();
+        final graceEndsAt = data["graceEndsAt"] as DateTime?;
+        final purgeAt = data["purgeAt"] as DateTime?;
+        if (graceEndsAt == null && purgeAt == null) return const SizedBox.shrink();
+
+        final now = DateTime.now();
+        String message;
+        Color color;
+        if (graceEndsAt != null) {
+          final days = graceEndsAt.difference(now).inDays.clamp(0, 99);
+          message = "Your subscription ended. You'll keep your current storage limit for "
+              "$days more day${days == 1 ? '' : 's'}, then move to the free 1GB tier. "
+              "Resubscribe any time to keep everything as-is.";
+          color = SilvoraColors.warn;
+        } else {
+          final days = purgeAt!.difference(now).inDays.clamp(0, 99);
+          message = "You're over the free 1GB limit. Free up space or resubscribe within "
+              "$days day${days == 1 ? '' : 's'}, or your oldest files beyond 1GB will be "
+              "permanently deleted.";
+          color = SilvoraColors.error;
+        }
+
+        return Container(
+          margin: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: color.withValues(alpha: 0.4)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.warning_amber_rounded, color: color, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(message, style: TextStyle(color: color, fontSize: 13)),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   // A slim storage-usage bar at the top of the vault: "X of Y used".
   Widget _buildUsageCard() {
     return FutureBuilder<Map<String, dynamic>>(
@@ -567,6 +622,7 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
         children: [
           Column(
             children: [
+              _buildGracePeriodBanner(),
               _buildVerificationBanner(),
               _buildUsageCard(),
               Expanded(

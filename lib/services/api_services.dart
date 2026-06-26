@@ -82,6 +82,9 @@ class ApiService {
       "used": (data["used_bytes"] as num).toInt(),
       "limit": (data["limit_bytes"] as num).toInt(),
       "tier": data["tier"] as String?,
+      // Both null unless a cancelled subscription is mid-grace-period.
+      "graceEndsAt": data["grace_ends_at"] != null ? DateTime.parse(data["grace_ends_at"]) : null,
+      "purgeAt": data["purge_at"] != null ? DateTime.parse(data["purge_at"]) : null,
     };
   }
 
