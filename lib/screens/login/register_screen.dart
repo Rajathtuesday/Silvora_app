@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../crypto/argon2.dart';
 import '../../crypto/master_key.dart';
@@ -26,6 +28,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _confirmCtrl = TextEditingController();
 
   bool _isLoading = false;
+  bool _acceptedPrivacyPolicy = false;
   String? _errorMessage;
 
   @override
@@ -55,6 +58,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       setState(() => _errorMessage = "Passwords do not match.");
       return;
     }
+    if (!_acceptedPrivacyPolicy) {
+      setState(() => _errorMessage = "You must accept the Privacy Policy to continue.");
+      return;
+    }
 
     setState(() {
       _isLoading = true;
@@ -65,7 +72,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final res = await http.post(
         Uri.parse("${SecureState.serverUrl}/api/auth/register/"),
         headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"email": email, "password": password}),
+        body: jsonEncode({
+          "email": email,
+          "password": password,
+          "accepted_privacy_policy": _acceptedPrivacyPolicy,
+        }),
       );
 
       if (res.statusCode != 201) {
@@ -219,6 +230,39 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     labelText: "Confirm password",
                     prefixIcon: Icon(Icons.lock_outline),
                   ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Checkbox(
+                      value: _acceptedPrivacyPolicy,
+                      activeColor: SilvoraColors.primary,
+                      onChanged: (v) => setState(() => _acceptedPrivacyPolicy = v ?? false),
+                    ),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () => setState(() => _acceptedPrivacyPolicy = !_acceptedPrivacyPolicy),
+                        child: RichText(
+                          text: TextSpan(
+                            style: const TextStyle(color: SilvoraColors.textSecondary, fontSize: 13),
+                            children: [
+                              const TextSpan(text: "I agree to the "),
+                              TextSpan(
+                                text: "Privacy Policy",
+                                style: const TextStyle(color: SilvoraColors.primaryLight, fontWeight: FontWeight.w600),
+                                recognizer: TapGestureRecognizer()
+                                  ..onTap = () => launchUrl(
+                                        Uri.parse("${SecureState.serverUrl}/privacy/"),
+                                        mode: LaunchMode.externalApplication,
+                                      ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
                 if (_errorMessage != null) ...[
                   const SizedBox(height: 20),
