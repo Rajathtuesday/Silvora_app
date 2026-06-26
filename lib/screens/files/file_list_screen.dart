@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../services/api_services.dart';
 import '../../services/download_service.dart';
@@ -442,6 +445,90 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
     );
   }
 
+  // ─── Export everything (data-portability / right-to-access) ───────────
+  // Decrypts every file on-device, the exact same way a normal single
+  // download already does, plus one small account-info file — there's no
+  // server-side bulk export possible by design, since the server can't
+  // read any of this either. Saved into the same in-app Downloads library
+  // a regular download uses.
+  Future<void> _exportAllData() async {
+    final allFiles = await ApiService.listFiles();
+    if (!mounted) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: SilvoraColors.card2,
+        title: const Text("Export my data", style: TextStyle(color: SilvoraColors.textPrimary)),
+        content: Text(
+          "Decrypts and saves all ${allFiles.length} file(s) to your Downloads, "
+          "plus a summary of your account info. This happens entirely on this "
+          "device — nothing new is sent to the server.",
+          style: const TextStyle(color: SilvoraColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Cancel", style: TextStyle(color: SilvoraColors.textSecondary)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Export", style: TextStyle(color: SilvoraColors.primaryLight)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    setState(() => _isDownloading = true);
+    int succeeded = 0, failed = 0;
+    try {
+      final quota = await ApiService.getQuota();
+
+      final profileText = StringBuffer()
+        ..writeln("Silvora account data export")
+        ..writeln("Exported: ${DateTime.now().toIso8601String()}")
+        ..writeln("Email: ${SecureState.userEmail ?? 'unknown'}")
+        ..writeln("Plan: ${quota["tier"] ?? 'unknown'}")
+        ..writeln("Storage used: ${_formatBytes(quota["used"] as int? ?? 0)} of ${_formatBytes(quota["limit"] as int? ?? 0)}")
+        ..writeln("Total files: ${allFiles.length}");
+
+      final tempDir = await getTemporaryDirectory();
+      final profileFile = File("${tempDir.path}/silvora_account_info.txt");
+      await profileFile.writeAsString(profileText.toString());
+      await DownloadsStore.add(source: profileFile, filename: "silvora_account_info.txt", mime: "text/plain");
+
+      for (final raw in allFiles) {
+        final f = raw as Map<String, dynamic>;
+        final fileId = f["file_id"] as String;
+        final filename = (f["filename"] as String?) ?? "encrypted.enc";
+        try {
+          final result = await DownloadService.downloadAndDecrypt(fileId: fileId, filename: filename);
+          if (result == null) { failed++; continue; }
+          await DownloadsStore.add(source: result.file, filename: filename, mime: result.mimeType);
+          succeeded++;
+        } catch (_) {
+          failed++;
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _isDownloading = false);
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          failed == 0
+              ? "Export complete — $succeeded file(s) saved to Downloads."
+              : "Export finished — $succeeded saved, $failed failed.",
+        ),
+        backgroundColor: failed == 0 ? null : SilvoraColors.error,
+        duration: const Duration(seconds: 5),
+      ),
+    );
+  }
+
   Future<void> _resendVerification() async {
     setState(() => _resendingVerification = true);
     final message = await ApiService.resendVerificationEmail();
@@ -714,6 +801,9 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
                     MaterialPageRoute(builder: (_) => const BillingScreen()),
                   ).then((_) => setState(_reloadFiles)); // tier may have changed
                   break;
+                case "export":
+                  await _exportAllData();
+                  break;
                 case "delete_account":
                   Navigator.push(
                     context,
@@ -730,6 +820,7 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
               _menuItem("refresh", Icons.refresh_rounded, "Refresh"),
               _menuItem("password", Icons.key_outlined, "Change password"),
               _menuItem("billing", Icons.workspace_premium_outlined, "Manage subscription"),
+              _menuItem("export", Icons.file_download_outlined, "Export my data"),
               const PopupMenuDivider(),
               _menuItem("delete_account", Icons.delete_forever_outlined, "Delete account", danger: true),
               _menuItem("logout", Icons.lock_outline, "Lock & sign out", danger: true),
