@@ -23,7 +23,11 @@ class RecoveryCrypto {
 
   static Uint8List newSalt() {
     final r = Random.secure();
-    return Uint8List.fromList(List.generate(16, (_) => r.nextInt(256)));
+    // 32 bytes, not the Argon2id spec's 16-byte minimum -- a 256-bit BIP39
+    // recovery phrase is the entire security model here, so there's no
+    // reason to sit at the bare minimum when the extra 16 bytes cost
+    // nothing. Server-side validation (min_len=16) already accepts this.
+    return Uint8List.fromList(List.generate(32, (_) => r.nextInt(256)));
   }
 
   /// Recovery-KEK — wraps the master key. Derived from the phrase + salt.

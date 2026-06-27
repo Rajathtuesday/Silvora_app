@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 
@@ -20,8 +21,13 @@ class Argon2Kdf {
     );
 
     final secretKey = await algo.deriveKey(
+      // utf8.encode, not .codeUnits: codeUnits is raw UTF-16 code units,
+      // identical to UTF-8 only for ASCII. Any non-ASCII password (accented
+      // letters, non-Latin scripts, emoji) would derive a different key
+      // than what was used to encrypt the vault, locking the user out
+      // permanently with no error to explain why.
       secretKey: SecretKey(
-        Uint8List.fromList(password.codeUnits),
+        Uint8List.fromList(utf8.encode(password)),
       ),
       nonce: salt,
     );

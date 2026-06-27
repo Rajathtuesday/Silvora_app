@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:silvora_app/crypto/argon2.dart';
@@ -55,6 +56,31 @@ void main() {
       expect(key1.length, equals(32));
       expect(key1, equals(key2), reason: "Same password and salt must yield the same KEK");
     });
+
+    test('Argon2Kdf encodes non-ASCII passwords as UTF-8, not UTF-16 code units', () async {
+      // Regression test for a real bug: .codeUnits is raw UTF-16 code units,
+      // identical to UTF-8 only for ASCII. 'é' is one UTF-16 code unit but
+      // two UTF-8 bytes, so the two encodings feed Argon2 different bytes
+      // and must derive different keys. If this ever regresses back to
+      // .codeUnits, this test independently re-derives the old (wrong) key
+      // and proves the production code no longer matches it.
+      const password = "Pässwörd123!é";
+      final salt = Uint8List.fromList(List.generate(16, (i) => i));
+
+      final actualKey = await Argon2Kdf.deriveKey(password: password, salt: salt, iterations: 3);
+
+      final oldBuggySecretKey = await Argon2id(memory: 65536, iterations: 3, parallelism: 2, hashLength: 32)
+          .deriveKey(secretKey: SecretKey(Uint8List.fromList(password.codeUnits)), nonce: salt);
+      final oldBuggyKey = Uint8List.fromList(await oldBuggySecretKey.extractBytes());
+
+      expect(actualKey, isNot(equals(oldBuggyKey)),
+          reason: "Argon2Kdf must use utf8.encode(password), not password.codeUnits");
+
+      // And it must still be internally consistent -- same non-ASCII
+      // password + salt always derives the same key.
+      final actualKeyAgain = await Argon2Kdf.deriveKey(password: password, salt: salt, iterations: 3);
+      expect(actualKey, equals(actualKeyAgain));
+    });
   });
 
   group('VaultService and SecureState', () {
@@ -106,6 +132,14 @@ void main() {
   });
 
   group('Recovery phrase', () {
+    test('newSalt generates 32 bytes, not the Argon2id spec minimum of 16', () {
+      final salt = RecoveryCrypto.newSalt();
+      expect(salt.length, equals(32),
+          reason: "A 256-bit recovery phrase's whole security model rests on "
+              "this salt being unpredictable -- 32 bytes costs nothing extra "
+              "over the 16-byte minimum and removes any ambiguity.");
+    });
+
     test('generates a valid 24-word phrase', () {
       final phrase = RecoveryCrypto.generatePhrase();
       expect(phrase.split(' ').length, equals(24));
