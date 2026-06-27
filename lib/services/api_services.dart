@@ -164,26 +164,24 @@ class ApiService {
   }
 
   // ===============================
-  // BILLING — create a subscription
+  // BILLING — get a signed link to subscribe on the website
   // ===============================
   /// tier: "pro" | "enterprise". interval: "monthly" | "yearly".
-  /// Returns {subscription_id, razorpay_key_id} for the checkout SDK — the
-  /// actual tier upgrade happens server-side via Razorpay's webhook, not
-  /// from this response.
-  static Future<Map<String, String>> createSubscription(String tier, String interval) async {
-    final res = await AuthClient.post(
-      _url("/api/billing/subscribe/"),
-      headers: {"Content-Type": "application/json"},
-      body: jsonEncode({"tier": tier, "interval": interval}),
+  /// Subscribing happens entirely in the browser now, not in-app -- Google
+  /// Play requires in-app digital subscriptions to go through Play
+  /// Billing, and checking out on the website sidesteps that requirement
+  /// entirely. This just returns a signed link that already identifies the
+  /// user; the actual Razorpay subscription gets created when that link is
+  /// opened, not by this call.
+  static Future<String> getBillingWebLink(String tier, String interval) async {
+    final res = await AuthClient.get(
+      _url("/api/billing/web-link/?tier=$tier&interval=$interval"),
     );
     final data = jsonDecode(res.body);
-    if (res.statusCode != 201) {
-      throw Exception(data["error"] as String? ?? "Could not start subscription.");
+    if (res.statusCode != 200) {
+      throw Exception(data["error"] as String? ?? "Could not open subscription page.");
     }
-    return {
-      "subscription_id": data["subscription_id"] as String,
-      "razorpay_key_id": data["razorpay_key_id"] as String,
-    };
+    return data["url"] as String;
   }
 
   // ===============================

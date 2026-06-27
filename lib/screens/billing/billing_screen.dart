@@ -1,7 +1,7 @@
 // lib/screens/billing/billing_screen.dart
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:razorpay_flutter/razorpay_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../services/api_services.dart';
 import '../../theme/silvora_theme.dart';
@@ -40,8 +40,7 @@ class BillingScreen extends StatefulWidget {
   State<BillingScreen> createState() => _BillingScreenState();
 }
 
-class _BillingScreenState extends State<BillingScreen> {
-  late Razorpay _razorpay;
+class _BillingScreenState extends State<BillingScreen> with WidgetsBindingObserver {
   Future<Map<String, dynamic>>? _quotaFuture;
   String _interval = "monthly"; // toggle shared by both tier cards
   String? _subscribingTier; // which card's button is mid-flight, for a per-card spinner
@@ -51,17 +50,31 @@ class _BillingScreenState extends State<BillingScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _quotaFuture = ApiService.getQuota();
-    _razorpay = Razorpay();
-    _razorpay.on(Razorpay.EVENT_PAYMENT_SUCCESS, _onPaymentSuccess);
-    _razorpay.on(Razorpay.EVENT_PAYMENT_ERROR, _onPaymentError);
-    _razorpay.on(Razorpay.EVENT_EXTERNAL_WALLET, _onExternalWallet);
   }
 
   @override
   void dispose() {
-    _razorpay.clear();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Subscribing happens in the external browser now, not in-app (Google
+    // Play requires in-app digital subscriptions to go through Play
+    // Billing; doing it on the website sidesteps that entirely). Re-fetch
+    // quota on resume so this screen picks up the real, server-confirmed
+    // tier once the user comes back from completing checkout — the webhook
+    // that actually flips the tier runs independently of this app either way.
+    if (state == AppLifecycleState.resumed && _subscribingTier != null) {
+      setState(() {
+        _quotaFuture = ApiService.getQuota();
+        _subscribingTier = null;
+        _subscribingInterval = null;
+      });
+    }
   }
 
   Future<void> _subscribe(_Tier tier) async {
@@ -72,17 +85,10 @@ class _BillingScreenState extends State<BillingScreen> {
     });
 
     try {
-      final result = await ApiService.createSubscription(tier.tier, _interval);
-      _razorpay.open({
-        'key': result["razorpay_key_id"],
-        'subscription_id': result["subscription_id"],
-        'name': 'Silvora',
-        'description': '${tier.label} ($_interval)',
-        'theme': {'color': '#5B4FE8'},
-      });
-      // Deliberately not resetting _subscribingTier here — the checkout
-      // sheet is now in front of this screen; the spinner state doesn't
-      // matter again until a Razorpay event fires below.
+      final url = await ApiService.getBillingWebLink(tier.tier, _interval);
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      // Deliberately not resetting _subscribingTier here — didChangeAppLifecycleState
+      // handles that once the user comes back from the browser.
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -91,45 +97,6 @@ class _BillingScreenState extends State<BillingScreen> {
         _subscribingInterval = null;
       });
     }
-  }
-
-  void _onPaymentSuccess(PaymentSuccessResponse response) {
-    if (!mounted) return;
-    setState(() {
-      _subscribingTier = null;
-      _subscribingInterval = null;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Payment received — activating your subscription…")),
-    );
-    // The actual tier upgrade happens server-side via Razorpay's webhook,
-    // independent of this app. The SDK callback only confirms checkout
-    // succeeded, not that the webhook has landed yet — give it a moment,
-    // then re-fetch quota so the screen reflects the real, server-confirmed
-    // tier rather than assuming success from the callback alone.
-    Future.delayed(const Duration(seconds: 4), () {
-      if (!mounted) return;
-      setState(() => _quotaFuture = ApiService.getQuota());
-    });
-  }
-
-  void _onPaymentError(PaymentFailureResponse response) {
-    if (!mounted) return;
-    setState(() {
-      _subscribingTier = null;
-      _subscribingInterval = null;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Payment failed: ${response.message ?? 'cancelled'}")),
-    );
-  }
-
-  void _onExternalWallet(ExternalWalletResponse response) {
-    if (!mounted) return;
-    setState(() {
-      _subscribingTier = null;
-      _subscribingInterval = null;
-    });
   }
 
   @override
