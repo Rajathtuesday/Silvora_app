@@ -27,10 +27,14 @@ class DownloadService {
   static String get _baseUrl => SecureState.serverUrl;
   static Uri _url(String path) => Uri.parse("$_baseUrl$path");
 
-  /// Derive per-file encryption key from master key + fileId
+  /// Derive per-file encryption key from master key + fileId. Uses the
+  /// cached Extract result (see SecureState.getMasterKeyPrk) since this
+  /// gets called once per file in the "Export My Data" loop -- no reason
+  /// to redo Extract for every single file in someone's whole vault.
   static Future<SecretKey> _deriveFileKey(String fileId) async {
-    final keyBytes = await hkdfSha256(
-      ikm:  SecureState.masterKey,
+    final prk = await SecureState.getMasterKeyPrk();
+    final keyBytes = await hkdfExpand(
+      prk: prk,
       info: utf8.encode("silvora_file_$fileId"),
     );
     return SecretKey(keyBytes);

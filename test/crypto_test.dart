@@ -1,8 +1,10 @@
+import 'dart:convert';
 import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:silvora_app/crypto/argon2.dart';
+import 'package:silvora_app/crypto/hkdf.dart';
 import 'package:silvora_app/crypto/master_key.dart';
 import 'package:silvora_app/crypto/xchacha.dart';
 import 'package:silvora_app/state/secure_state.dart';
@@ -80,6 +82,83 @@ void main() {
       // password + salt always derives the same key.
       final actualKeyAgain = await Argon2Kdf.deriveKey(password: password, salt: salt, iterations: 3);
       expect(actualKey, equals(actualKeyAgain));
+    });
+  });
+
+  group('HKDF Extract/Expand split', () {
+    test('split Extract+Expand produces identical output to the combined call', () async {
+      // The whole point of caching the PRK is that it must be invisible
+      // to anyone decrypting a file -- if this ever drifted from the
+      // combined call's output, every already-encrypted file would
+      // become undecryptable, same class of bug as the password-encoding
+      // fix earlier.
+      final ikm = Uint8List.fromList(List.generate(32, (i) => i));
+      final info = utf8.encode("silvora_file_some-file-id");
+
+      final combined = await hkdfSha256(ikm: ikm, info: info);
+
+      final prk = await hkdfExtract(ikm);
+      final split = await hkdfExpand(prk: prk, info: info);
+
+      expect(split, equals(combined));
+    });
+
+    test('one Extract reused across multiple Expand calls matches separate combined calls', () async {
+      final ikm = Uint8List.fromList(List.generate(32, (i) => 32 - i));
+      final prk = await hkdfExtract(ikm);
+
+      for (final label in ["file-a", "file-b", "filename-a"]) {
+        final info = utf8.encode("silvora_$label");
+        final viaCachedPrk = await hkdfExpand(prk: prk, info: info);
+        final viaCombinedCall = await hkdfSha256(ikm: ikm, info: info);
+        expect(viaCachedPrk, equals(viaCombinedCall), reason: "mismatch for label $label");
+      }
+    });
+
+    test('different info labels from the same cached PRK derive different keys', () async {
+      final ikm = Uint8List.fromList(List.generate(32, (i) => i + 1));
+      final prk = await hkdfExtract(ikm);
+
+      final keyA = await hkdfExpand(prk: prk, info: utf8.encode("file-a"));
+      final keyB = await hkdfExpand(prk: prk, info: utf8.encode("file-b"));
+
+      expect(keyA, isNot(equals(keyB)));
+    });
+  });
+
+  group('SecureState master key PRK cache', () {
+    setUp(() => SecureState.lock());
+    tearDown(() => SecureState.lock());
+
+    test('getMasterKeyPrk matches a fresh Extract of the same master key', () async {
+      final key = Uint8List.fromList(List.generate(32, (i) => i));
+      SecureState.setMasterKey(key);
+
+      final cached = await SecureState.getMasterKeyPrk();
+      final fresh = await hkdfExtract(key);
+
+      expect((await cached.extractBytes()), equals(await fresh.extractBytes()));
+    });
+
+    test('getMasterKeyPrk returns the same instance on repeated calls (actually cached)', () async {
+      SecureState.setMasterKey(Uint8List.fromList(List.generate(32, (i) => i)));
+
+      final first = await SecureState.getMasterKeyPrk();
+      final second = await SecureState.getMasterKeyPrk();
+
+      expect(identical(first, second), isTrue, reason: "should reuse the cached PRK, not recompute it");
+    });
+
+    test('lock() clears the cached PRK', () async {
+      SecureState.setMasterKey(Uint8List.fromList(List.generate(32, (i) => i)));
+      final beforeLock = await SecureState.getMasterKeyPrk();
+
+      SecureState.lock();
+      SecureState.setMasterKey(Uint8List.fromList(List.generate(32, (i) => i)));
+      final afterRelock = await SecureState.getMasterKeyPrk();
+
+      expect(identical(beforeLock, afterRelock), isFalse,
+          reason: "a fresh unlock must compute a fresh PRK, not reuse one from before lock()");
     });
   });
 

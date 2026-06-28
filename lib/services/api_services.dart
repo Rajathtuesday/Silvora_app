@@ -35,13 +35,16 @@ class ApiService {
 
     final List<dynamic> rawFiles = jsonDecode(res.body);
     final algo = Xchacha20.poly1305Aead();
+    // Extract once for this whole list, not once per file -- see
+    // SecureState.getMasterKeyPrk for why that's safe and correct.
+    final prk = await SecureState.getMasterKeyPrk();
 
     for (var f in rawFiles) {
       if (f["filename_ciphertext"] != null) {
         try {
           final fileId = f["file_id"];
-          final nameKeyBytes = await hkdfSha256(
-            ikm: SecureState.masterKey,
+          final nameKeyBytes = await hkdfExpand(
+            prk: prk,
             info: utf8.encode("silvora_filename_$fileId"),
           );
 
