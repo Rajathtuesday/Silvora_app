@@ -14,7 +14,6 @@ import '../trash/trash_screen.dart';
 import '../login/login_screen.dart';
 import '../settings/change_password_screen.dart';
 import '../settings/delete_account_screen.dart';
-import '../billing/billing_screen.dart';
 import '../../theme/silvora_theme.dart';
 
 class FileListScreen extends StatefulWidget {
@@ -795,12 +794,6 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
                     MaterialPageRoute(builder: (_) => const ChangePasswordScreen()),
                   );
                   break;
-                case "billing":
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const BillingScreen()),
-                  ).then((_) => setState(_reloadFiles)); // tier may have changed
-                  break;
                 case "export":
                   await _exportAllData();
                   break;
@@ -819,7 +812,13 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
               _menuItem("trash", Icons.delete_outline, "Trash"),
               _menuItem("refresh", Icons.refresh_rounded, "Refresh"),
               _menuItem("password", Icons.key_outlined, "Change password"),
-              _menuItem("billing", Icons.workspace_premium_outlined, "Manage subscription"),
+              // "Manage subscription" is deliberately removed from this release: it
+              // opened an external-browser checkout for a digital subscription
+              // consumed inside the app, which Play's Payments policy generally
+              // requires to go through Google Play Billing instead. Re-add once
+              // either Play Billing is integrated or the External Offers program
+              // is properly enrolled -- see billing_screen.dart, still intact and
+              // unused for now.
               _menuItem("export", Icons.file_download_outlined, "Export my data"),
               const PopupMenuDivider(),
               _menuItem("delete_account", Icons.delete_forever_outlined, "Delete account", danger: true),
