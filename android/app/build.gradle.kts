@@ -67,6 +67,10 @@ android {
     namespace = "cloud.silvora.app"
     compileSdk = 36
 
+    buildFeatures {
+        buildConfig = true // needed for BuildConfig.DEBUG (FLAG_SECURE gating)
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

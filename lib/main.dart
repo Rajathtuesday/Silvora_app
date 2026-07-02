@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:silvora_app/screens/auth_gate.dart';
+import 'package:silvora_app/screens/device_security_gate.dart';
 import 'package:silvora_app/services/vault_service.dart';
 import 'package:silvora_app/state/secure_state.dart';
 import 'package:silvora_app/theme/silvora_theme.dart';
@@ -66,7 +67,7 @@ class _SilvoraAppState extends State<SilvoraApp> with WidgetsBindingObserver {
       navigatorKey: _navKey,
       debugShowCheckedModeBanner: false,
       theme: SilvoraTheme.dark(),
-      home: const AuthGate(),
+      home: const DeviceSecurityGate(),
     );
   }
 }

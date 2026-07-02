@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.Settings
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -13,15 +14,22 @@ import java.io.File
 
 class MainActivity : FlutterActivity() {
     private val channelName = "silvora/mediastore"
+    private val securityChannelName = "silvora/device_security"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // FLAG_SECURE keeps decrypted vault content out of screenshots, screen
         // recordings, and the app-switcher / recents thumbnail. Essential for an
         // end-to-end-encrypted vault: nothing sensitive leaks via the OS.
-        window.setFlags(
-            WindowManager.LayoutParams.FLAG_SECURE,
-            WindowManager.LayoutParams.FLAG_SECURE,
-        )
+        // Debug-only exception: gated to release builds so Play Store listing
+        // screenshots can actually be taken (a debug build, e.g. via
+        // `flutter run` or a debug APK install) -- real users only ever get a
+        // release build, which always has this on.
+        if (!BuildConfig.DEBUG) {
+            window.setFlags(
+                WindowManager.LayoutParams.FLAG_SECURE,
+                WindowManager.LayoutParams.FLAG_SECURE,
+            )
+        }
         super.onCreate(savedInstanceState)
     }
 
@@ -48,6 +56,69 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, securityChannelName)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "checkDeviceSecurity" -> result.success(
+                        mapOf(
+                            "isRooted" to isDeviceRooted(),
+                            "developerModeEnabled" to isDeveloperModeEnabled(),
+                        )
+                    )
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    /**
+     * Heuristic root detection -- not foolproof (a sufficiently determined
+     * root can hide itself from all of these), but catches the overwhelming
+     * majority of real rooted devices without needing a third-party library
+     * or its own maintenance burden. Defense in depth: this is a warning
+     * gate, not the only thing standing between an attacker and the vault --
+     * the actual encryption never assumes the OS itself is trustworthy.
+     */
+    private fun isDeviceRooted(): Boolean {
+        val buildTagsSuspicious = Build.TAGS?.contains("test-keys") == true
+
+        val suspiciousPaths = arrayOf(
+            "/system/app/Superuser.apk",
+            "/sbin/su",
+            "/system/bin/su",
+            "/system/xbin/su",
+            "/data/local/xbin/su",
+            "/data/local/bin/su",
+            "/system/sd/xbin/su",
+            "/system/bin/failsafe/su",
+            "/data/local/su",
+            "/su/bin/su",
+            "/system/xbin/busybox",
+            "/sbin/.magisk",
+        )
+        val pathFound = suspiciousPaths.any { File(it).exists() }
+
+        val suExecutable = try {
+            val process = Runtime.getRuntime().exec(arrayOf("which", "su"))
+            process.inputStream.bufferedReader().readLine() != null
+        } catch (e: Exception) {
+            false
+        }
+
+        return buildTagsSuspicious || pathFound || suExecutable
+    }
+
+    /** Settings.Global keys, not a runtime permission -- no user prompt needed. */
+    private fun isDeveloperModeEnabled(): Boolean {
+        val devSettingsOn = Settings.Global.getInt(
+            applicationContext.contentResolver,
+            Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0,
+        ) != 0
+        val adbOn = Settings.Global.getInt(
+            applicationContext.contentResolver,
+            Settings.Global.ADB_ENABLED, 0,
+        ) != 0
+        return devSettingsOn || adbOn
     }
 
     /**
