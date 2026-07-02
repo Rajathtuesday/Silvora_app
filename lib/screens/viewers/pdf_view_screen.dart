@@ -1,36 +1,3 @@
-// import 'dart:io';
-// import 'dart:typed_data';
-
-// import 'package:flutter/material.dart';
-// import 'package:flutter_pdfview/flutter_pdfview.dart';
-
-// class PdfViewScreen extends StatelessWidget {
-//   final File file;
-//   final String filename;
-
-//   const PdfViewScreen({
-//     super.key,
-//     required this.file,
-//     required this.filename, required Uint8List bytes,
-//   });
-
-//   @override
-//   Widget build(BuildContext context) {
-//     return Scaffold(
-//       appBar: AppBar(title: Text(filename)),
-//       body: PDFView(
-//         filePath: file.path,
-//         enableSwipe: true,
-//         swipeHorizontal: true,
-//         autoSpacing: true,
-//         pageFling: true,
-//       ),
-//     );
-//   }
-// }
-
-// ******************************************************
-
 // lib/screens/viewers/pdf_view_screen.dart
 import 'dart:typed_data';
 import 'package:flutter/material.dart';

@@ -1,31 +1,3 @@
-// import 'dart:io';
-
-// import 'package:flutter/material.dart';
-
-// class ImageViewScreen extends StatelessWidget {
-//   final File file;
-//   final String filename;
-
-//   const ImageViewScreen({
-//     super.key,
-//     required this.file,
-//     required this.filename,
-//   });
-
-//   @override
-//   Widget build(BuildContext context) {
-//     return Scaffold(
-//       appBar: AppBar(title: Text(filename)),
-//       body: Center(
-//         child: InteractiveViewer(
-//           child: Image.file(file),
-//         ),
-//       ),
-//     );
-//   }
-// }
-// *************************************************************************  
-
 // lib/screens/viewers/image_view_screen.dart
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
