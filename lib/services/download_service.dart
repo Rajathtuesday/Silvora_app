@@ -15,11 +15,13 @@ class DecryptedFileResult {
   final File file;
   final String filename;
   final String mimeType;
+  final IntegrityStatus integrityStatus;
 
   DecryptedFileResult({
     required this.file,
     required this.filename,
     required this.mimeType,
+    required this.integrityStatus,
   });
 }
 
@@ -88,7 +90,7 @@ class DownloadService {
 
     // ── 4. Derive file-specific encryption key ────────────────────
     final secretKey = await _deriveFileKey(fileId);
-    final file = await FileDecryptor.decryptFile(
+    final decrypted = await FileDecryptor.decryptFile(
       chunksMeta: chunksMeta,
       secretKey: secretKey,
       filename: filename,
@@ -105,9 +107,10 @@ class DownloadService {
     );
 
     return DecryptedFileResult(
-      file: file,
+      file: decrypted.file,
       filename: filename,
       mimeType: guessMimeType(filename),
+      integrityStatus: decrypted.integrityStatus,
     );
   }
 

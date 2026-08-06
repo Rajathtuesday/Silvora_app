@@ -121,6 +121,16 @@ class IntegrityService {
   static Future<IntegrityManifest?> fetch(String fileId) async {
     final res = await AuthClient.get(_url("/download/file/$fileId/integrity/"));
     if (res.statusCode == 404) return null;
+    if (res.statusCode == 409) {
+      // Server proved (durably, at commit time) this file HAD a manifest.
+      // It's missing now -- deleted or tampered with after commit, not a
+      // legacy file. Fail closed: never silently downgrade to zero
+      // verification the way a genuine 404 does.
+      throw Exception(
+        "Integrity check failed: this file's manifest was established at "
+        "upload and is missing now. Refusing to decrypt unverified.",
+      );
+    }
     if (res.statusCode != 200) {
       throw Exception("Integrity manifest fetch failed (HTTP ${res.statusCode}).");
     }

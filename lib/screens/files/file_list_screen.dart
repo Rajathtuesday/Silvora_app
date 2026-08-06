@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../crypto/file_decryptor.dart';
 import '../../services/api_services.dart';
 import '../../services/download_service.dart';
 import '../../services/downloads_store.dart';
@@ -435,9 +436,12 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
       mime: result.mimeType,
     );
     if (!mounted) return;
+    final integrityNote = result.integrityStatus == IntegrityStatus.verified
+        ? " · integrity verified"
+        : " · no manifest (legacy file, unverified)";
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text("Saved to Downloads — ${item.filename}"),
+        content: Text("Saved to Downloads — ${item.filename}$integrityNote"),
         action: SnackBarAction(label: "OPEN", onPressed: () => DownloadsStore.open(item)),
         duration: const Duration(seconds: 5),
       ),
@@ -480,7 +484,7 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
     if (confirmed != true) return;
 
     setState(() => _isDownloading = true);
-    int succeeded = 0, failed = 0;
+    int succeeded = 0, failed = 0, skippedLegacy = 0;
     try {
       final quota = await ApiService.getQuota();
 
@@ -506,6 +510,7 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
           if (result == null) { failed++; continue; }
           await DownloadsStore.add(source: result.file, filename: filename, mime: result.mimeType);
           succeeded++;
+          if (result.integrityStatus == IntegrityStatus.skippedLegacy) skippedLegacy++;
         } catch (_) {
           failed++;
         }
@@ -515,12 +520,13 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
     }
 
     if (!mounted) return;
+    final integritySuffix = skippedLegacy == 0 ? "" : " ($skippedLegacy without a manifest — legacy)";
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           failed == 0
-              ? "Export complete — $succeeded file(s) saved to Downloads."
-              : "Export finished — $succeeded saved, $failed failed.",
+              ? "Export complete — $succeeded file(s) saved to Downloads.$integritySuffix"
+              : "Export finished — $succeeded saved, $failed failed.$integritySuffix",
         ),
         backgroundColor: failed == 0 ? null : SilvoraColors.error,
         duration: const Duration(seconds: 5),

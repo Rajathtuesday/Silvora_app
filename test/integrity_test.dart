@@ -125,7 +125,7 @@ void main() {
         1: await IntegrityService.hashChunk(c1),
       };
 
-      final file = await FileDecryptor.decryptFile(
+      final result = await FileDecryptor.decryptFile(
         chunksMeta: [
           {"index": 0},
           {"index": 1},
@@ -136,7 +136,8 @@ void main() {
         fetchChunk: (i) async => envs[i]!,
       );
 
-      expect(await file.readAsBytes(), equals(Uint8List.fromList([...c0, ...c1])));
+      expect(await result.file.readAsBytes(), equals(Uint8List.fromList([...c0, ...c1])));
+      expect(result.integrityStatus, IntegrityStatus.verified);
     });
 
     test('fails when a chunk hash does not match (tamper/substitution)', () async {
@@ -182,7 +183,7 @@ void main() {
 
     test('legacy file (null hashes) still decrypts without verification', () async {
       final envs = await envelopes();
-      final file = await FileDecryptor.decryptFile(
+      final result = await FileDecryptor.decryptFile(
         chunksMeta: [
           {"index": 0},
           {"index": 1},
@@ -192,7 +193,8 @@ void main() {
         expectedHashes: null,
         fetchChunk: (i) async => envs[i]!,
       );
-      expect(await file.readAsBytes(), equals(Uint8List.fromList([...c0, ...c1])));
+      expect(await result.file.readAsBytes(), equals(Uint8List.fromList([...c0, ...c1])));
+      expect(result.integrityStatus, IntegrityStatus.skippedLegacy);
     });
   });
 }

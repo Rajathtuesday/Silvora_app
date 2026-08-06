@@ -4,6 +4,17 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:path_provider/path_provider.dart';
 
+/// Outcome of integrity verification for one decrypted file. No "failed"
+/// value here -- a failed check throws (fail closed), exactly as before;
+/// this only names the two outcomes that can actually return successfully.
+enum IntegrityStatus { verified, skippedLegacy }
+
+class DecryptResult {
+  final File file;
+  final IntegrityStatus integrityStatus;
+  DecryptResult({required this.file, required this.integrityStatus});
+}
+
 class FileDecryptor {
   static final Xchacha20 _algorithm = Xchacha20.poly1305Aead();
   static const int _nonceLen = 24;
@@ -20,7 +31,7 @@ class FileDecryptor {
   /// plaintext is hashed after decryption and compared — any reorder,
   /// substitution, or tamper that slipped past per-chunk AEAD is caught here and
   /// the download fails closed. Null = legacy file with no manifest (skip).
-  static Future<File> decryptFile({
+  static Future<DecryptResult> decryptFile({
     required List<Map<String, dynamic>> chunksMeta,
     required SecretKey secretKey,
     required String filename,
@@ -83,6 +94,11 @@ class FileDecryptor {
       await sink.close();
     }
 
-    return file;
+    return DecryptResult(
+      file: file,
+      integrityStatus: expectedHashes != null
+          ? IntegrityStatus.verified
+          : IntegrityStatus.skippedLegacy,
+    );
   }
 }
