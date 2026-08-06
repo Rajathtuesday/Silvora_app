@@ -68,6 +68,12 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.1
+  # Used directly in test/integrity_test.dart to fake path_provider's
+  # platform channel in unit tests -- previously only a transitive
+  # dependency of path_provider, declaring it explicitly since test code
+  # imports it directly.
+  path_provider_platform_interface: ^2.1.2
+  plugin_platform_interface: ^2.1.8
 
 flutter_launcher_icons:
   android: true

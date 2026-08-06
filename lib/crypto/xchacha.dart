@@ -40,7 +40,7 @@ class XChaCha {
 
   /// Generates a secure random 24-byte nonce for XChaCha20.
   static Future<Uint8List> randomNonce() async {
-    final nonce = await _algo.newNonce();
+    final nonce = _algo.newNonce();
     return Uint8List.fromList(nonce);
   }
 }

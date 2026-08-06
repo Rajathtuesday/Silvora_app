@@ -190,7 +190,7 @@ class _UploadScreenState extends State<UploadScreen> {
           ((i + 1) * chunkSize > fileLen) ? fileLen - i * chunkSize : chunkSize,
         );
 
-        final nonce = await _algorithm.newNonce();
+        final nonce = _algorithm.newNonce();
         final box = await _algorithm.encrypt(
           plain,
           secretKey: secretKey,
@@ -282,7 +282,7 @@ class _UploadScreenState extends State<UploadScreen> {
                       border: Border.all(
                         color: filePreview == null
                             ? SilvoraColors.border
-                            : SilvoraColors.primary.withOpacity(0.5),
+                            : SilvoraColors.primary.withValues(alpha: 0.5),
                         width: 1.5,
                       ),
                     ),

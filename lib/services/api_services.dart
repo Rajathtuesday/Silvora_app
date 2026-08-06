@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 
 import 'auth_client.dart';
@@ -106,7 +105,7 @@ class ApiService {
 
     final algo = Xchacha20.poly1305Aead();
     final secretKey = SecretKey(nameKeyBytes);
-    final nonce = await algo.newNonce();
+    final nonce = algo.newNonce();
 
     final box = await algo.encrypt(
       utf8.encode(newFilename),

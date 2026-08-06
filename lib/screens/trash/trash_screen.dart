@@ -147,7 +147,7 @@ class _TrashScreenState extends State<TrashScreen> {
                   const SizedBox(height: 12),
                   Text(
                     "Failed to load Trash",
-                    style: TextStyle(color: Colors.white.withOpacity(0.7), fontSize: 16),
+                    style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 16),
                   ),
                   const SizedBox(height: 20),
                   ElevatedButton.icon(
@@ -166,7 +166,7 @@ class _TrashScreenState extends State<TrashScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.delete_outline, size: 72, color: Colors.white.withOpacity(0.08)),
+                  Icon(Icons.delete_outline, size: 72, color: Colors.white.withValues(alpha: 0.08)),
                   const SizedBox(height: 20),
                   const Text(
                     "Trash is empty",
@@ -189,7 +189,7 @@ class _TrashScreenState extends State<TrashScreen> {
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                color: SilvoraColors.warn.withOpacity(0.1),
+                color: SilvoraColors.warn.withValues(alpha: 0.1),
                 child: Row(
                   children: [
                     const Icon(Icons.timer_outlined, color: SilvoraColors.warn, size: 16),
@@ -197,7 +197,7 @@ class _TrashScreenState extends State<TrashScreen> {
                     Expanded(
                       child: Text(
                         "Files are automatically purged after 7 days. Restore to keep them.",
-                        style: TextStyle(color: SilvoraColors.warn.withOpacity(0.9), fontSize: 12),
+                        style: TextStyle(color: SilvoraColors.warn.withValues(alpha: 0.9), fontSize: 12),
                       ),
                     ),
                   ],
@@ -220,7 +220,7 @@ class _TrashScreenState extends State<TrashScreen> {
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(16),
                         side: BorderSide(
-                          color: SilvoraColors.error.withOpacity(0.2),
+                          color: SilvoraColors.error.withValues(alpha: 0.2),
                         ),
                       ),
                       margin: const EdgeInsets.only(bottom: 12),
@@ -232,7 +232,7 @@ class _TrashScreenState extends State<TrashScreen> {
                             Container(
                               padding: const EdgeInsets.all(10),
                               decoration: BoxDecoration(
-                                color: SilvoraColors.error.withOpacity(0.1),
+                                color: SilvoraColors.error.withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: const Icon(

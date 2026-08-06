@@ -340,6 +340,7 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
 
       if (previewOnly) {
         if (result.mimeType.startsWith('image/')) {
+          if (!context.mounted) return;
           // ── Image preview ── (awaited so the temp file lives until closed)
           await showDialog(
             context: context,
@@ -369,7 +370,7 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
         } else if (result.mimeType == "text/plain") {
           // ── Text preview ──
           final text = await result.file.readAsString();
-          if (!mounted) return;
+          if (!context.mounted) return;
           await showDialog(
             context: context,
             builder: (c) => AlertDialog(
@@ -407,7 +408,7 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
         await _saveToLibrary(result, filename);
       }
     } catch (e) {
-      if (!mounted) return;
+      if (!context.mounted) return;
       setState(() => _isDownloading = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -860,7 +861,7 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.cloud_off_rounded, size: 64, color: Colors.white.withOpacity(0.15)),
+                      Icon(Icons.cloud_off_rounded, size: 64, color: Colors.white.withValues(alpha: 0.15)),
                       const SizedBox(height: 16),
                       const Text("Sync failed", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: SilvoraColors.textSecondary)),
                       const SizedBox(height: 8),
@@ -882,7 +883,7 @@ class _FileListScreenState extends State<FileListScreen> with WidgetsBindingObse
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.folder_open_outlined, size: 72, color: Colors.white.withOpacity(0.08)),
+                      Icon(Icons.folder_open_outlined, size: 72, color: Colors.white.withValues(alpha: 0.08)),
                       const SizedBox(height: 20),
                       const Text("Your vault is empty", style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: SilvoraColors.textSecondary)),
                       const SizedBox(height: 8),

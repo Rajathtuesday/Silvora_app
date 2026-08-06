@@ -22,7 +22,7 @@ class _FakePathProvider extends PathProviderPlatform with MockPlatformInterfaceM
 /// fresh nonce, wrapped in the self-describing {n,c,m} envelope.
 Future<Uint8List> _makeChunkEnvelope(List<int> plain, SecretKey key) async {
   final algo = Xchacha20.poly1305Aead();
-  final nonce = await algo.newNonce();
+  final nonce = algo.newNonce();
   final box = await algo.encrypt(plain, secretKey: key, nonce: nonce);
   final env = jsonEncode({
     "n": base64Encode(nonce),
@@ -70,7 +70,7 @@ void main() {
       };
 
       final algo = Xchacha20.poly1305Aead();
-      final nonce = await algo.newNonce();
+      final nonce = algo.newNonce();
       final box = await algo.encrypt(
         utf8.encode(jsonEncode(manifest)),
         secretKey: SecretKey(key),
@@ -89,7 +89,7 @@ void main() {
     test('a tampered manifest ciphertext fails authentication', () async {
       final key = Uint8List.fromList(List.generate(32, (i) => i));
       final algo = Xchacha20.poly1305Aead();
-      final nonce = await algo.newNonce();
+      final nonce = algo.newNonce();
       final box = await algo.encrypt(
         utf8.encode('{"v":1}'),
         secretKey: SecretKey(key),

@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'auth_client.dart';
@@ -43,7 +42,7 @@ class UploadService {
 
       final algo = Xchacha20.poly1305Aead();
       final secretKey = SecretKey(nameKeyBytes);
-      final nonce = await algo.newNonce();
+      final nonce = algo.newNonce();
 
       // Encrypt the filename string
       final box = await algo.encrypt(
