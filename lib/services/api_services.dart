@@ -186,6 +186,36 @@ class ApiService {
     return data["url"] as String;
   }
 
+  // Fetched once before a Play purchase starts, passed as
+  // applicationUserName on GooglePlayPurchaseParam -- see
+  // billing/services/obfuscated_account.py for what this binds.
+  static Future<String> getPlayObfuscatedAccountId() async {
+    final res = await AuthClient.get(
+      _url("/api/billing/play/account-id/"),
+    );
+    final data = jsonDecode(res.body);
+    if (res.statusCode != 200) {
+      throw Exception(data["error"] as String? ?? "Could not start the purchase.");
+    }
+    return data["obfuscated_account_id"] as String;
+  }
+
+  static Future<Map<String, dynamic>> verifyPlayPurchase({
+    required String purchaseToken,
+    required String productId,
+  }) async {
+    final res = await AuthClient.post(
+      _url("/api/billing/play/verify/"),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({"purchase_token": purchaseToken, "product_id": productId}),
+    );
+    final data = jsonDecode(res.body);
+    if (res.statusCode != 200) {
+      throw Exception(data["error"] as String? ?? "Could not verify this purchase.");
+    }
+    return data as Map<String, dynamic>;
+  }
+
   // ===============================
   // ACCOUNT DELETION
   // ===============================
