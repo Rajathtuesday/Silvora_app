@@ -7,6 +7,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
 import android.view.WindowManager
+import androidx.core.view.WindowCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -17,6 +18,12 @@ class MainActivity : FlutterActivity() {
     private val securityChannelName = "silvora/device_security"
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Explicit edge-to-edge opt-in for Android 15+ (targetSdk 36 here).
+        // Without this, the window falls back to the deprecated non-edge-to-edge
+        // fitting path that Play Console's pre-launch report flags. Every screen
+        // already wraps its content in SafeArea, so this is safe to enable app-wide.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+
         // FLAG_SECURE keeps decrypted vault content out of screenshots, screen
         // recordings, and the app-switcher / recents thumbnail. Essential for an
         // end-to-end-encrypted vault: nothing sensitive leaks via the OS.
