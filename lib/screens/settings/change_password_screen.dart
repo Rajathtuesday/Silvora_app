@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../crypto/argon2.dart';
 import '../../crypto/xchacha.dart';
 import '../../crypto/recovery_crypto.dart';
+import '../../crypto/login_auth.dart';
 import '../../services/auth_client.dart';
 import '../../state/secure_state.dart';
 import '../../theme/silvora_theme.dart';
@@ -64,12 +65,15 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
       final nonce = await XChaCha.randomNonce();
       final box = await XChaCha.encrypt(plaintext: masterKey, key: kek, nonce: nonce);
       final envelope = Uint8List.fromList([...box.cipherText, ...box.mac.bytes]);
+      // The new password never reaches the server -- only a one-way
+      // HKDF-derived proof of possession does, same as login/register.
+      final loginAuthKey = await LoginAuthCrypto.deriveLoginAuthKey(kek);
 
       final res = await AuthClient.post(
         Uri.parse("${SecureState.serverUrl}/api/auth/master-key/change-password/"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
-          "new_password": pw,
+          "new_password": _hex(loginAuthKey),
           "enc_master_key": _hex(envelope),
           "enc_master_key_nonce": _hex(Uint8List.fromList(nonce)),
           "kdf_salt": _hex(salt),

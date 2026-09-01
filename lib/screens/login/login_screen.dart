@@ -7,6 +7,9 @@ import '../../state/secure_state.dart';
 import '../../storage/jwt_store.dart';
 import '../../services/vault_service.dart';
 import '../../services/api_services.dart';
+import '../../crypto/argon2.dart';
+import '../../crypto/recovery_crypto.dart';
+import '../../crypto/login_auth.dart';
 import '../files/file_list_screen.dart';
 import 'register_screen.dart';
 import 'recover_screen.dart';
@@ -46,14 +49,41 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       final server = SecureState.serverUrl;
-      
-      // 1. Authenticate and get JWT
+
+      // 1. Fetch the KDF params (public, pre-auth) so the KEK -- and from
+      //    it, the login-auth-key we actually authenticate with -- can be
+      //    derived locally. The raw password never leaves the device from
+      //    this point on; only a one-way HKDF-derived proof of possession
+      //    does. Same reasoning as registration, just fetched instead of
+      //    freshly generated, since login has to match the salt already on
+      //    file for this account.
+      final kdfResp = await http.post(
+        Uri.parse("$server/api/auth/login-kdf-params/"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"username": username}),
+      );
+      if (kdfResp.statusCode != 200) {
+        setState(() => _errorMessage = "Invalid credentials.");
+        return;
+      }
+      final kdfMeta = jsonDecode(kdfResp.body) as Map<String, dynamic>;
+      final salt = RecoveryCrypto.fromHex(kdfMeta["kdf_salt_hex"] as String);
+      final kek = await Argon2Kdf.deriveKey(
+        password: password,
+        salt: salt,
+        iterations: (kdfMeta["kdf_iterations"] ?? 3) as int,
+        memoryKb: (kdfMeta["kdf_memory_kb"] ?? 65536) as int,
+        parallelism: (kdfMeta["kdf_parallelism"] ?? 1) as int,
+      );
+      final loginAuthKey = await LoginAuthCrypto.deriveLoginAuthKey(kek);
+
+      // 2. Authenticate with the derived value, never the raw password.
       final authResp = await http.post(
         Uri.parse("$server/api/auth/token/"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "username": username,
-          "password": password,
+          "password": RecoveryCrypto.toHex(loginAuthKey),
         }),
       );
 
@@ -69,9 +99,10 @@ class _LoginScreenState extends State<LoginScreen> {
       // Persist the session so it survives an app restart.
       await JwtStore().saveTokens(authData["access"], authData["refresh"]);
 
-      // Fetch the master-key envelope and unlock the vault locally.
+      // 3. Unlock using the KEK already derived above -- avoids paying
+      //    Argon2's deliberately expensive cost a second time.
       try {
-        await VaultService.unlock(password);
+        await VaultService.unlockWithKek(kek);
       } catch (e) {
         setState(() => _errorMessage = "Failed to unlock vault. Check your password.");
         return;

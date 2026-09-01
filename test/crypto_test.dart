@@ -10,6 +10,7 @@ import 'package:silvora_app/crypto/xchacha.dart';
 import 'package:silvora_app/state/secure_state.dart';
 import 'package:silvora_app/services/vault_service.dart';
 import 'package:silvora_app/crypto/recovery_crypto.dart';
+import 'package:silvora_app/crypto/login_auth.dart';
 
 void main() {
   group('Cryptography Round-Trip Tests', () {
@@ -260,6 +261,84 @@ void main() {
       final a2 = await RecoveryCrypto.deriveAuthKey(kek);
       expect(a1, equals(a2));
       expect(a1.length, equals(32));
+    });
+  });
+
+  group('Login-auth key (2026-08-31 fix: login/KEK separation)', () {
+    test('deterministic and 32 bytes, same shape as the recovery auth key', () async {
+      final kek = Uint8List.fromList(List.generate(32, (i) => i));
+      final k1 = await LoginAuthCrypto.deriveLoginAuthKey(kek);
+      final k2 = await LoginAuthCrypto.deriveLoginAuthKey(kek);
+      expect(k1, equals(k2), reason: "same KEK must always derive the same login-auth-key");
+      expect(k1.length, equals(32));
+    });
+
+    test('different KEKs (i.e. different passwords) derive different login-auth-keys', () async {
+      final kekA = Uint8List.fromList(List.generate(32, (i) => i));
+      final kekB = Uint8List.fromList(List.generate(32, (i) => i + 1));
+      final a = await LoginAuthCrypto.deriveLoginAuthKey(kekA);
+      final b = await LoginAuthCrypto.deriveLoginAuthKey(kekB);
+      expect(a, isNot(equals(b)));
+    });
+
+    test('is NOT the KEK itself -- it is actually transformed, not passed through', () async {
+      final kek = Uint8List.fromList(List.generate(32, (i) => i * 3 % 256));
+      final loginAuthKey = await LoginAuthCrypto.deriveLoginAuthKey(kek);
+      expect(loginAuthKey, isNot(equals(kek)),
+          reason: "if this ever matched the KEK, the whole point of the fix is gone -- "
+              "the server would be storing something that IS the key material.");
+    });
+
+    test('domain separation actually matters: the SAME kek produces a DIFFERENT '
+        'value here than through the recovery-auth-key derivation', () async {
+      // Not a real-world scenario (login and recovery normally derive from
+      // different KEKs, via different passwords/phrases) -- this isolates
+      // the one thing that's supposed to matter: the "silvora-login-auth"
+      // vs "silvora-recovery-auth" HKDF info label. If someone ever "simplified"
+      // this by reusing one label for both, this test catches it.
+      final kek = Uint8List.fromList(List.generate(32, (i) => 255 - i));
+      final loginAuthKey = await LoginAuthCrypto.deriveLoginAuthKey(kek);
+      final recoveryAuthKeyIfSameKek = await RecoveryCrypto.deriveAuthKey(kek);
+      expect(loginAuthKey, isNot(equals(recoveryAuthKeyIfSameKek)),
+          reason: "login-auth and recovery-auth must use distinct HKDF info labels");
+    });
+
+    test('hex round-trips cleanly via the existing RecoveryCrypto helpers', () async {
+      final kek = Uint8List.fromList(List.generate(32, (i) => i));
+      final loginAuthKey = await LoginAuthCrypto.deriveLoginAuthKey(kek);
+      final hex = RecoveryCrypto.toHex(loginAuthKey);
+      final backToBytes = RecoveryCrypto.fromHex(hex);
+      expect(backToBytes, equals(loginAuthKey));
+    });
+  });
+
+  group('Login flow no longer sends the raw password (2026-08-31 fix)', () {
+    test('the value sent over the wire is the derived key, not the password, '
+        'given the same kek register/login now derive locally', () async {
+      // Mirrors what register_screen.dart / login_screen.dart actually do:
+      // derive the KEK once, use it both to wrap the master key locally AND
+      // to compute what gets sent over the wire -- and confirm those two
+      // uses produce genuinely different bytes from the raw password.
+      const password = "Str0ng!Vault#Key2026";
+      final salt = Uint8List.fromList(List.generate(16, (i) => i));
+      final masterKey = MasterKey.generate();
+
+      final kek = await Argon2Kdf.deriveKey(password: password, salt: salt, iterations: 2);
+      final nonce = await XChaCha.randomNonce();
+      final box = await XChaCha.encrypt(plaintext: masterKey, key: kek, nonce: nonce);
+      // envelope isn't inspected further here -- unlockWithPassword's
+      // existing test above already covers the encrypt/decrypt round trip
+      // for a kek derived this same way; this test's job is the wire value.
+      // ignore: unused_local_variable
+      final envelope = Uint8List.fromList([...box.cipherText, ...box.mac.bytes]);
+
+      final loginAuthKey = await LoginAuthCrypto.deriveLoginAuthKey(kek);
+      final wireValue = RecoveryCrypto.toHex(loginAuthKey);
+
+      // What would have been sent under the OLD (vulnerable) scheme.
+      expect(wireValue, isNot(equals(password)),
+          reason: "the value sent over the wire must never be the raw password");
+      expect(wireValue.length, equals(64), reason: "32 bytes, hex-encoded");
     });
   });
 }

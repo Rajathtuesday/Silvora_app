@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import '../../crypto/argon2.dart';
 import '../../crypto/xchacha.dart';
 import '../../crypto/recovery_crypto.dart';
+import '../../crypto/login_auth.dart';
 import '../../state/secure_state.dart';
 import '../../theme/silvora_theme.dart';
 
@@ -116,6 +117,9 @@ class _RecoverScreenState extends State<RecoverScreen> {
       final box = await XChaCha.encrypt(plaintext: masterKey, key: kek, nonce: nonce);
       final envelope = Uint8List.fromList([...box.cipherText, ...box.mac.bytes]);
       final authKey = await RecoveryCrypto.deriveAuthKey(rKek);
+      // The new password never reaches the server -- only a one-way
+      // HKDF-derived proof of possession does, same as login/register.
+      final loginAuthKey = await LoginAuthCrypto.deriveLoginAuthKey(kek);
 
       // 4) Submit the reset (server verifies the auth-key, sets the new password).
       final res = await http.post(
@@ -124,7 +128,7 @@ class _RecoverScreenState extends State<RecoverScreen> {
         body: jsonEncode({
           "email": email,
           "recovery_auth_key": _hex(authKey),
-          "new_password": pw,
+          "new_password": _hex(loginAuthKey),
           "enc_master_key": _hex(envelope),
           "enc_master_key_nonce": _hex(Uint8List.fromList(nonce)),
           "kdf_salt": _hex(salt),

@@ -219,11 +219,13 @@ class ApiService {
   // ===============================
   // ACCOUNT DELETION
   // ===============================
-  static Future<void> deleteAccount(String password) async {
+  /// [loginAuthKeyHex] -- the hex-encoded, HKDF-derived proof of password
+  /// possession (see LoginAuthCrypto), never the raw password itself.
+  static Future<void> deleteAccount(String loginAuthKeyHex) async {
     final res = await AuthClient.post(
       _url("/api/auth/account/delete/"),
       headers: {"Content-Type": "application/json"},
-      body: jsonEncode({"password": password}),
+      body: jsonEncode({"password": loginAuthKeyHex}),
     );
 
     if (res.statusCode != 200) {

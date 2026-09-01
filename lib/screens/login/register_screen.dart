@@ -11,6 +11,7 @@ import '../../crypto/argon2.dart';
 import '../../crypto/master_key.dart';
 import '../../crypto/xchacha.dart';
 import '../../crypto/recovery_crypto.dart';
+import '../../crypto/login_auth.dart';
 import '../../state/secure_state.dart';
 import '../../theme/silvora_theme.dart';
 import 'recovery_phrase_screen.dart';
@@ -69,12 +70,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
     });
 
     try {
+      // Derive the KEK first -- needed both for wrapping the master key
+      // below AND for the login-auth value we send instead of the raw
+      // password. From this point on, `password` itself never leaves the
+      // device again: only a one-way HKDF-derived proof of possession
+      // (loginAuthKey) is sent to the server, so a captured request body
+      // (or a compromised server that logs it) can never be used to
+      // reconstruct the KEK and unwrap the vault.
+      final random = Random.secure();
+      final salt = Uint8List.fromList(List.generate(16, (_) => random.nextInt(256)));
+      final kek = await Argon2Kdf.deriveKey(
+        password: password, salt: salt,
+        iterations: 3, memoryKb: 65536, parallelism: 1,
+      );
+      final loginAuthKey = await LoginAuthCrypto.deriveLoginAuthKey(kek);
+      final loginAuthKeyHex = _hex(loginAuthKey);
+
       final res = await http.post(
         Uri.parse("${SecureState.serverUrl}/api/auth/register/"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "email": email,
-          "password": password,
+          "password": loginAuthKeyHex,
           "accepted_privacy_policy": _acceptedPrivacyPolicy,
         }),
       );
@@ -94,7 +111,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final authResp = await http.post(
         Uri.parse("${SecureState.serverUrl}/api/auth/token/"),
         headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"username": email, "password": password}),
+        body: jsonEncode({"username": email, "password": loginAuthKeyHex}),
       );
       if (authResp.statusCode != 200) {
         setState(() => _errorMessage = "Account made, but sign-in failed. Try logging in.");
@@ -105,13 +122,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       // ── The master key, wrapped two ways ───────────────────────────
       final masterKey = MasterKey.generate();
 
-      // 1) Password-wrapped envelope
-      final random = Random.secure();
-      final salt = Uint8List.fromList(List.generate(16, (_) => random.nextInt(256)));
-      final kek = await Argon2Kdf.deriveKey(
-        password: password, salt: salt,
-        iterations: 3, memoryKb: 65536, parallelism: 1,
-      );
+      // 1) Password-wrapped envelope (kek/salt already derived above)
       final nonce = await XChaCha.randomNonce();
       final box = await XChaCha.encrypt(plaintext: masterKey, key: kek, nonce: nonce);
       final envelope = Uint8List.fromList([...box.cipherText, ...box.mac.bytes]);

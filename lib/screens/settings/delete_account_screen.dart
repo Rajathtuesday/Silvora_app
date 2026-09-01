@@ -1,7 +1,12 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../crypto/argon2.dart';
+import '../../crypto/recovery_crypto.dart';
+import '../../crypto/login_auth.dart';
 import '../../services/api_services.dart';
+import '../../services/auth_client.dart';
 import '../../state/secure_state.dart';
 import '../../storage/jwt_store.dart';
 import '../../theme/silvora_theme.dart';
@@ -62,7 +67,28 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
     setState(() { _isLoading = true; _error = null; });
 
     try {
-      await ApiService.deleteAccount(_passwordCtrl.text);
+      // The entered password never reaches the server -- derive the same
+      // one-way login-auth-key login/register/change-password use, from
+      // this account's own KDF params (fetched fresh here since the KEK
+      // itself isn't kept in memory after unlock -- only the master key is).
+      final metaRes = await AuthClient.get(
+        Uri.parse("${SecureState.serverUrl}/api/auth/master-key/"),
+      );
+      if (metaRes.statusCode != 200) {
+        setState(() => _error = "Could not verify your password. Try again.");
+        return;
+      }
+      final meta = jsonDecode(metaRes.body) as Map<String, dynamic>;
+      final kek = await Argon2Kdf.deriveKey(
+        password: _passwordCtrl.text,
+        salt: RecoveryCrypto.fromHex(meta["kdf_salt_hex"] as String),
+        iterations: (meta["kdf_iterations"] ?? 3) as int,
+        memoryKb: (meta["kdf_memory_kb"] ?? 65536) as int,
+        parallelism: (meta["kdf_parallelism"] ?? 1) as int,
+      );
+      final loginAuthKey = await LoginAuthCrypto.deriveLoginAuthKey(kek);
+
+      await ApiService.deleteAccount(RecoveryCrypto.toHex(loginAuthKey));
 
       SecureState.logout();
       await JwtStore().clear();
