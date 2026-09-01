@@ -12,6 +12,8 @@ import '../../crypto/master_key.dart';
 import '../../crypto/xchacha.dart';
 import '../../crypto/recovery_crypto.dart';
 import '../../crypto/login_auth.dart';
+import '../../crypto/password_strength.dart';
+import '../../crypto/zeroize.dart';
 import '../../state/secure_state.dart';
 import '../../theme/silvora_theme.dart';
 import 'recovery_phrase_screen.dart';
@@ -51,8 +53,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       setState(() => _errorMessage = "All fields are required.");
       return;
     }
-    if (password.length < 12) {
-      setState(() => _errorMessage = "Password must be at least 12 characters.");
+    final strengthError = PasswordStrength.validate(password);
+    if (strengthError != null) {
+      setState(() => _errorMessage = strengthError);
       return;
     }
     if (password != confirm) {
@@ -125,6 +128,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       // 1) Password-wrapped envelope (kek/salt already derived above)
       final nonce = await XChaCha.randomNonce();
       final box = await XChaCha.encrypt(plaintext: masterKey, key: kek, nonce: nonce);
+      zeroize(kek); // last use above -- not needed again in this function
       final envelope = Uint8List.fromList([...box.cipherText, ...box.mac.bytes]);
 
       // 2) Recovery-phrase-wrapped envelope
@@ -133,8 +137,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       final rKek = await RecoveryCrypto.deriveKek(phrase, rSalt);
       final rNonce = await XChaCha.randomNonce();
       final rBox = await XChaCha.encrypt(plaintext: masterKey, key: rKek, nonce: rNonce);
+      zeroize(masterKey); // last use above
       final rEnvelope = Uint8List.fromList([...rBox.cipherText, ...rBox.mac.bytes]);
       final authKey = await RecoveryCrypto.deriveAuthKey(rKek);
+      zeroize(rKek); // last use above
 
       final setupResp = await http.post(
         Uri.parse("${SecureState.serverUrl}/api/auth/master-key/setup/"),

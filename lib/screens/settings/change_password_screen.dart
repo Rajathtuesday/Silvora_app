@@ -8,6 +8,8 @@ import '../../crypto/argon2.dart';
 import '../../crypto/xchacha.dart';
 import '../../crypto/recovery_crypto.dart';
 import '../../crypto/login_auth.dart';
+import '../../crypto/password_strength.dart';
+import '../../crypto/zeroize.dart';
 import '../../services/auth_client.dart';
 import '../../state/secure_state.dart';
 import '../../theme/silvora_theme.dart';
@@ -40,8 +42,9 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     final pw = _passwordCtrl.text;
     final confirm = _confirmCtrl.text;
 
-    if (pw.length < 12) {
-      setState(() => _error = "Password must be at least 12 characters.");
+    final strengthError = PasswordStrength.validate(pw);
+    if (strengthError != null) {
+      setState(() => _error = strengthError);
       return;
     }
     if (pw != confirm) {
@@ -68,6 +71,9 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
       // The new password never reaches the server -- only a one-way
       // HKDF-derived proof of possession does, same as login/register.
       final loginAuthKey = await LoginAuthCrypto.deriveLoginAuthKey(kek);
+      zeroize(kek); // last use above -- NOT masterKey, which is the live
+      // SecureState.masterKey by reference (line 61), still needed for the
+      // rest of this unlocked session.
 
       final res = await AuthClient.post(
         Uri.parse("${SecureState.serverUrl}/api/auth/master-key/change-password/"),

@@ -11,6 +11,7 @@ import 'package:silvora_app/state/secure_state.dart';
 import 'package:silvora_app/services/vault_service.dart';
 import 'package:silvora_app/crypto/recovery_crypto.dart';
 import 'package:silvora_app/crypto/login_auth.dart';
+import 'package:silvora_app/crypto/zeroize.dart';
 
 void main() {
   group('Cryptography Round-Trip Tests', () {
@@ -339,6 +340,27 @@ void main() {
       expect(wireValue, isNot(equals(password)),
           reason: "the value sent over the wire must never be the raw password");
       expect(wireValue.length, equals(64), reason: "32 bytes, hex-encoded");
+    });
+  });
+
+  group('zeroize (2026-09-01 fix: ephemeral KEK/master-key wiping)', () {
+    test('overwrites every byte of the buffer with 0', () {
+      final bytes = Uint8List.fromList(List.generate(32, (i) => i + 1));
+      expect(bytes.any((b) => b != 0), isTrue); // sanity: not already zero
+
+      zeroize(bytes);
+
+      expect(bytes, everyElement(equals(0)));
+    });
+
+    test('SecureState.lock() actually zeroizes the master key in place, not just drops it', () async {
+      final key = Uint8List.fromList(List.generate(32, (i) => 200 - i));
+      SecureState.setMasterKey(key);
+      final live = SecureState.masterKey; // same underlying buffer SecureState holds
+
+      SecureState.lock();
+
+      expect(live, everyElement(equals(0)));
     });
   });
 }

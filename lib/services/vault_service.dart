@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import '../state/secure_state.dart';
 import '../crypto/argon2.dart';
 import '../crypto/xchacha.dart';
+import '../crypto/zeroize.dart';
 import 'auth_client.dart';
 
 /// Thrown when the vault can't be reached because the session is no longer
@@ -39,8 +40,13 @@ class VaultService {
       nonce: nonce,
       mac: mac,
     );
+    // kek is the same buffer the caller holds (Dart passes Uint8List by
+    // reference) -- wiping it here also wipes unlockWithPassword's and
+    // unlockWithKek's own copy, so neither needs its own zeroize call.
+    zeroize(kek);
 
-    SecureState.setMasterKey(masterKey);
+    SecureState.setMasterKey(masterKey); // makes its own internal copy
+    zeroize(masterKey); // so this decrypted local is now a dead duplicate
   }
 
   /// Pure, offline unlock: derive the KEK from the password + KDF params,

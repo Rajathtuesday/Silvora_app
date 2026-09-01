@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 
 import '../crypto/hkdf.dart';
+import '../crypto/zeroize.dart';
 
 class SecureState {
   // =========================================================
@@ -66,8 +67,10 @@ class SecureState {
   // per-file/per-purpose Expand call afterward (see lib/crypto/hkdf.dart
   // for why this matters). As sensitive as the master key — anyone with
   // this PRK can derive every file/filename key without it, since the
-  // "info" labels are predictable strings, not secrets — so it gets the
-  // exact same zeroize-on-lock treatment.
+  // "info" labels are predictable strings, not secrets. lock() only nulls
+  // the reference, not a real byte-wipe: SecretKey (from the `cryptography`
+  // package) doesn't expose a mutable buffer the way Uint8List does, so
+  // this one is left for GC, unlike _masterKey below.
   static SecretKey? _masterKeyPrk;
 
   /// Lazily computed on first use after unlock, then reused until lock().
@@ -79,7 +82,7 @@ class SecureState {
   /// Explicit vault lock (zeroize memory for security).
   static void lock() {
     if (_masterKey != null) {
-      _masterKey!.fillRange(0, _masterKey!.length, 0);
+      zeroize(_masterKey!);
       _masterKey = null;
     }
     _masterKeyPrk = null;

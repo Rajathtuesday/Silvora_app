@@ -9,6 +9,8 @@ import '../../crypto/argon2.dart';
 import '../../crypto/xchacha.dart';
 import '../../crypto/recovery_crypto.dart';
 import '../../crypto/login_auth.dart';
+import '../../crypto/password_strength.dart';
+import '../../crypto/zeroize.dart';
 import '../../state/secure_state.dart';
 import '../../theme/silvora_theme.dart';
 
@@ -55,8 +57,9 @@ class _RecoverScreenState extends State<RecoverScreen> {
       setState(() => _error = "That doesn't look like a valid 24-word recovery phrase.");
       return;
     }
-    if (pw.length < 12) {
-      setState(() => _error = "New password must be at least 12 characters.");
+    final strengthError = PasswordStrength.validate(pw);
+    if (strengthError != null) {
+      setState(() => _error = strengthError);
       return;
     }
     if (pw != confirm) {
@@ -115,11 +118,14 @@ class _RecoverScreenState extends State<RecoverScreen> {
       );
       final nonce = await XChaCha.randomNonce();
       final box = await XChaCha.encrypt(plaintext: masterKey, key: kek, nonce: nonce);
+      zeroize(masterKey); // last use above
       final envelope = Uint8List.fromList([...box.cipherText, ...box.mac.bytes]);
       final authKey = await RecoveryCrypto.deriveAuthKey(rKek);
+      zeroize(rKek); // last use above
       // The new password never reaches the server -- only a one-way
       // HKDF-derived proof of possession does, same as login/register.
       final loginAuthKey = await LoginAuthCrypto.deriveLoginAuthKey(kek);
+      zeroize(kek); // last use above
 
       // 4) Submit the reset (server verifies the auth-key, sets the new password).
       final res = await http.post(
