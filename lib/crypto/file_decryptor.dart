@@ -4,17 +4,6 @@ import 'dart:typed_data';
 import 'package:cryptography/cryptography.dart';
 import 'package:path_provider/path_provider.dart';
 
-/// Outcome of integrity verification for one decrypted file. No "failed"
-/// value here -- a failed check throws (fail closed), exactly as before;
-/// this only names the two outcomes that can actually return successfully.
-enum IntegrityStatus { verified, skippedLegacy }
-
-class DecryptResult {
-  final File file;
-  final IntegrityStatus integrityStatus;
-  DecryptResult({required this.file, required this.integrityStatus});
-}
-
 class FileDecryptor {
   static final Xchacha20 _algorithm = Xchacha20.poly1305Aead();
   static const int _nonceLen = 24;
@@ -27,18 +16,18 @@ class FileDecryptor {
   }
 
   /// [expectedHashes] (chunk index -> SHA-256 hex of the plaintext) comes from
-  /// the client-signed integrity manifest. When provided, every chunk's
-  /// plaintext is hashed after decryption and compared — any reorder,
-  /// substitution, or tamper that slipped past per-chunk AEAD is caught here and
-  /// the download fails closed. Null = legacy file with no manifest (skip).
-  static Future<DecryptResult> decryptFile({
+  /// the client-signed integrity manifest. Every chunk's plaintext is hashed
+  /// after decryption and compared — any reorder, substitution, or tamper
+  /// that slipped past per-chunk AEAD is caught here and the download fails
+  /// closed.
+  static Future<File> decryptFile({
     required List<Map<String, dynamic>> chunksMeta,
     required SecretKey secretKey,
     required String filename,
     required Future<Uint8List> Function(int index) fetchChunk,
-    Map<int, String>? expectedHashes,
+    required Map<int, String> expectedHashes,
   }) async {
-    if (expectedHashes != null && expectedHashes.length != chunksMeta.length) {
+    if (expectedHashes.length != chunksMeta.length) {
       // The set of chunks doesn't match what the client signed — truncated or
       // padded by the server. Refuse before writing anything.
       throw Exception(
@@ -74,31 +63,31 @@ class FileDecryptor {
         final secretBox = SecretBox(cipherText, nonce: nonce, mac: Mac(macBytes));
         final chunkPlain = await _algorithm.decrypt(secretBox, secretKey: secretKey);
 
-        if (expectedHashes != null) {
-          final expected = expectedHashes[index];
-          if (expected == null) {
-            throw Exception("Integrity check failed: unexpected chunk $index.");
-          }
-          final actual = await _sha256Hex(chunkPlain);
-          if (actual != expected) {
-            throw Exception("Integrity check failed: chunk $index does not match its signed hash.");
-          }
+        final expected = expectedHashes[index];
+        if (expected == null) {
+          throw Exception("Integrity check failed: unexpected chunk $index.");
+        }
+        final actual = await _sha256Hex(chunkPlain);
+        if (actual != expected) {
+          throw Exception("Integrity check failed: chunk $index does not match its signed hash.");
         }
 
         sink.add(chunkPlain);
       }
       await sink.flush();
-    } catch (e) {
-      throw Exception("Decryption failed: $e");
-    } finally {
       await sink.close();
+    } catch (e) {
+      await sink.close();
+      // Whatever plaintext was already written for this attempt is not a
+      // file anyone should be able to open -- delete it here rather than
+      // relying on the caller, which only ever gets a reference to `file`
+      // on success and so can never clean up exactly this failure path.
+      try {
+        if (await file.exists()) await file.delete();
+      } catch (_) {}
+      throw Exception("Decryption failed: $e");
     }
 
-    return DecryptResult(
-      file: file,
-      integrityStatus: expectedHashes != null
-          ? IntegrityStatus.verified
-          : IntegrityStatus.skippedLegacy,
-    );
+    return file;
   }
 }

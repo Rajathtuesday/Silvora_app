@@ -15,13 +15,11 @@ class DecryptedFileResult {
   final File file;
   final String filename;
   final String mimeType;
-  final IntegrityStatus integrityStatus;
 
   DecryptedFileResult({
     required this.file,
     required this.filename,
     required this.mimeType,
-    required this.integrityStatus,
   });
 }
 
@@ -85,7 +83,8 @@ class DownloadService {
     }
     chunksMeta.sort((a, b) => (a["index"] as int).compareTo(b["index"] as int));
 
-    // ── 3. Fetch the client-signed integrity manifest (null = legacy file) ──
+    // ── 3. Fetch the client-signed integrity manifest ──────────────
+    // Throws on anything but a real manifest -- no legacy/skip path.
     final integrity = await IntegrityService.fetch(fileId);
 
     // ── 4. Derive file-specific encryption key ────────────────────
@@ -94,7 +93,7 @@ class DownloadService {
       chunksMeta: chunksMeta,
       secretKey: secretKey,
       filename: filename,
-      expectedHashes: integrity?.hashes,
+      expectedHashes: integrity.hashes,
       fetchChunk: (index) async {
         final chunkRes = await AuthClient.get(
           _url("/download/file/$fileId/chunk/$index/"),
@@ -107,10 +106,9 @@ class DownloadService {
     );
 
     return DecryptedFileResult(
-      file: decrypted.file,
+      file: decrypted,
       filename: filename,
       mimeType: guessMimeType(filename),
-      integrityStatus: decrypted.integrityStatus,
     );
   }
 

@@ -116,16 +116,18 @@ class IntegrityService {
     }
   }
 
-  /// Fetch + decrypt the integrity manifest. Returns null when the file predates
-  /// the integrity layer (server 404), so old files still download.
-  static Future<IntegrityManifest?> fetch(String fileId) async {
+  /// Fetch + decrypt the integrity manifest. Fails closed on anything but a
+  /// real manifest -- including 404. upload_service.py's commit() has
+  /// required every file to have a manifest since 2026-08-06, so a missing
+  /// one is never legitimate; treating 404 as "legacy, skip" would let a
+  /// malicious/compromised server silently defeat verification for ANY
+  /// file just by lying about the status code, since the server fully
+  /// controls which one it sends.
+  static Future<IntegrityManifest> fetch(String fileId) async {
     final res = await AuthClient.get(_url("/download/file/$fileId/integrity/"));
-    if (res.statusCode == 404) return null;
     if (res.statusCode == 409) {
       // Server proved (durably, at commit time) this file HAD a manifest.
-      // It's missing now -- deleted or tampered with after commit, not a
-      // legacy file. Fail closed: never silently downgrade to zero
-      // verification the way a genuine 404 does.
+      // It's missing now -- deleted or tampered with after commit.
       throw Exception(
         "Integrity check failed: this file's manifest was established at "
         "upload and is missing now. Refusing to decrypt unverified.",

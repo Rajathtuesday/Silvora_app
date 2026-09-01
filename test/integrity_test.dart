@@ -9,13 +9,20 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'package:silvora_app/services/integrity_service.dart';
 import 'package:silvora_app/crypto/file_decryptor.dart';
+import 'package:silvora_app/state/secure_state.dart';
 
 /// Routes getTemporaryPath() to a real temp dir so FileDecryptor can stream
 /// output during unit tests (no Android plugin available in the test VM).
+/// Remembers the last directory handed out so tests can inspect what
+/// FileDecryptor actually did on disk after it returns/throws.
 class _FakePathProvider extends PathProviderPlatform with MockPlatformInterfaceMixin {
+  static late Directory lastTempDir;
+
   @override
-  Future<String?> getTemporaryPath() async =>
-      Directory.systemTemp.createTempSync('silvora_itg').path;
+  Future<String?> getTemporaryPath() async {
+    lastTempDir = Directory.systemTemp.createTempSync('silvora_itg');
+    return lastTempDir.path;
+  }
 }
 
 /// Encrypt one plaintext chunk the way upload does: XChaCha20-Poly1305 with a
@@ -136,8 +143,7 @@ void main() {
         fetchChunk: (i) async => envs[i]!,
       );
 
-      expect(await result.file.readAsBytes(), equals(Uint8List.fromList([...c0, ...c1])));
-      expect(result.integrityStatus, IntegrityStatus.verified);
+      expect(await result.readAsBytes(), equals(Uint8List.fromList([...c0, ...c1])));
     });
 
     test('fails when a chunk hash does not match (tamper/substitution)', () async {
@@ -181,20 +187,51 @@ void main() {
       );
     });
 
-    test('legacy file (null hashes) still decrypts without verification', () async {
+    test('deletes the partial plaintext when a chunk fails mid-stream', () async {
       final envs = await envelopes();
-      final result = await FileDecryptor.decryptFile(
-        chunksMeta: [
-          {"index": 0},
-          {"index": 1},
-        ],
-        secretKey: key,
-        filename: "out_legacy.bin",
-        expectedHashes: null,
-        fetchChunk: (i) async => envs[i]!,
+      final hashes = {
+        0: await IntegrityService.hashChunk(c0), // chunk 0 verifies and gets written
+        1: "deadbeef" * 8, // chunk 1's signed hash is wrong -> throws after chunk 0 is on disk
+      };
+
+      await expectLater(
+        () => FileDecryptor.decryptFile(
+          chunksMeta: [
+            {"index": 0},
+            {"index": 1},
+          ],
+          secretKey: key,
+          filename: "out_partial.bin",
+          expectedHashes: hashes,
+          fetchChunk: (i) async => envs[i]!,
+        ),
+        throwsA(anything),
       );
-      expect(await result.file.readAsBytes(), equals(Uint8List.fromList([...c0, ...c1])));
-      expect(result.integrityStatus, IntegrityStatus.skippedLegacy);
+
+      final leftover = File("${_FakePathProvider.lastTempDir.path}/out_partial.bin");
+      expect(await leftover.exists(), isFalse);
+    });
+  });
+
+  group('IntegrityService.fetch fails closed', () {
+    test('a 404 (no manifest at all) throws instead of skipping verification', () async {
+      final server = await HttpServer.bind('localhost', 0);
+      server.listen((req) {
+        req.response.statusCode = 404;
+        req.response.close();
+      });
+      final originalUrl = SecureState.serverUrl;
+      SecureState.serverUrl = 'http://localhost:${server.port}';
+
+      try {
+        await expectLater(
+          () => IntegrityService.fetch('some-file-id'),
+          throwsA(anything),
+        );
+      } finally {
+        SecureState.serverUrl = originalUrl;
+        await server.close(force: true);
+      }
     });
   });
 }
