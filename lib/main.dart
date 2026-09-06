@@ -4,6 +4,7 @@ import 'package:silvora_app/screens/device_security_gate.dart';
 import 'package:silvora_app/services/vault_service.dart';
 import 'package:silvora_app/state/secure_state.dart';
 import 'package:silvora_app/theme/silvora_theme.dart';
+import 'package:silvora_app/utils/auto_lock_timer.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,7 +27,11 @@ class _SilvoraAppState extends State<SilvoraApp> with WidgetsBindingObserver {
   static const Duration _autoLockAfter = Duration(minutes: 1);
 
   final GlobalKey<NavigatorState> _navKey = GlobalKey<NavigatorState>();
-  DateTime? _backgroundedAt;
+  // Monotonic (not wall-clock) timer -- see auto_lock_timer.dart for why:
+  // a plain DateTime.now() comparison can be defeated by winding the
+  // device's system clock backward while the phone sits unlocked and
+  // backgrounded.
+  final AutoLockTimer _autoLockTimer = AutoLockTimer();
 
   @override
   void initState() {
@@ -43,14 +48,13 @@ class _SilvoraAppState extends State<SilvoraApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
-      _backgroundedAt ??= DateTime.now();
+      _autoLockTimer.markBackgrounded();
     } else if (state == AppLifecycleState.resumed) {
-      final since = _backgroundedAt;
-      _backgroundedAt = null;
-      if (since == null) return;
-
-      final away = DateTime.now().difference(since);
-      if (SecureState.isUnlocked && away >= _autoLockAfter) {
+      // Always evaluate (and let it reset its internal clock) regardless of
+      // whether the vault is currently unlocked, so a stale running timer
+      // never carries over into the next background/resume cycle.
+      final wasAwayTooLong = _autoLockTimer.shouldLockOnResume(_autoLockAfter);
+      if (SecureState.isUnlocked && wasAwayTooLong) {
         VaultService.lock();
         _navKey.currentState?.pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const AuthGate()),
