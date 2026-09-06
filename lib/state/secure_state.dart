@@ -67,10 +67,16 @@ class SecureState {
   // per-file/per-purpose Expand call afterward (see lib/crypto/hkdf.dart
   // for why this matters). As sensitive as the master key — anyone with
   // this PRK can derive every file/filename key without it, since the
-  // "info" labels are predictable strings, not secrets. lock() only nulls
-  // the reference, not a real byte-wipe: SecretKey (from the `cryptography`
-  // package) doesn't expose a mutable buffer the way Uint8List does, so
-  // this one is left for GC, unlike _masterKey below.
+  // "info" labels are predictable strings, not secrets.
+  //
+  // lock() calls .destroy() on this before dropping the reference, which
+  // actually overwrites its underlying bytes with zeros -- hkdfExtract()
+  // builds it as a SecretKeyData with overwriteWhenDestroyed: true
+  // specifically so this works, rather than being the no-op a bare
+  // SecretKey(bytes) would make it. (Earlier review note: "the cryptography
+  // package's SecretKey doesn't expose a mutable buffer" -- true of the
+  // abstract SecretKey type in general, but SecretKeyData.destroy() does
+  // support real zeroing when asked for at construction; see hkdf.dart.)
   static SecretKey? _masterKeyPrk;
 
   /// Lazily computed on first use after unlock, then reused until lock().
@@ -85,6 +91,7 @@ class SecureState {
       zeroize(_masterKey!);
       _masterKey = null;
     }
+    _masterKeyPrk?.destroy();
     _masterKeyPrk = null;
   }
 

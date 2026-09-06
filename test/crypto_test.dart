@@ -162,6 +162,49 @@ void main() {
       expect(identical(beforeLock, afterRelock), isFalse,
           reason: "a fresh unlock must compute a fresh PRK, not reuse one from before lock()");
     });
+
+    test('lock() actually destroys the cached PRK, not just drops the reference (2026-09-06 fix)', () async {
+      // Earlier known limitation: the cached PRK was only dereferenced on
+      // lock(), left for the GC's own schedule instead of being byte-wiped
+      // like _masterKey. hkdfExtract() now builds the PRK as a
+      // SecretKeyData with overwriteWhenDestroyed: true, and lock() now
+      // calls .destroy() on it before dropping the reference -- so the same
+      // object this test holds a reference to must show as destroyed
+      // afterward, proving the wipe reached the real shared instance and
+      // not just a copy.
+      SecureState.setMasterKey(Uint8List.fromList(List.generate(32, (i) => i)));
+      final prk = await SecureState.getMasterKeyPrk() as SecretKeyData;
+
+      expect(prk.hasBeenDestroyed, isFalse);
+      SecureState.lock();
+
+      expect(prk.hasBeenDestroyed, isTrue);
+      expect(() => prk.bytes, throwsStateError);
+    });
+
+    test('the SecretKeyData construction hkdfExtract uses actually zeros its bytes on destroy', () async {
+      // Goes one level below SecureState/hkdfExtract to prove the exact
+      // mechanism they rely on -- SecretKeyData(bytes, overwriteWhenDestroyed:
+      // true) -- really does overwrite real memory, not just flip a
+      // "destroyed" flag. SecretKeyData.bytes itself becomes unreadable
+      // after destroy() (by design, see the test below), so this keeps its
+      // own independent reference to the exact raw Uint8List handed to the
+      // constructor -- SecretKeyData/SensitiveBytes wrap that same list
+      // in place rather than copying it, so if destroy() truly zeroes the
+      // real buffer, this independently-held reference reflects it too.
+      final raw = Uint8List.fromList(List.generate(32, (i) => i + 1));
+      final key = SecretKeyData(raw, overwriteWhenDestroyed: true);
+
+      expect(raw.any((b) => b != 0), isTrue, reason: "sanity check: key material isn't already all zero");
+
+      key.destroy();
+
+      expect(raw.every((b) => b == 0), isTrue,
+          reason: "overwriteWhenDestroyed: true should zero the real underlying buffer in place, "
+              "not just discard the pointer to it");
+      expect(key.hasBeenDestroyed, isTrue);
+      expect(() => key.bytes, throwsStateError);
+    });
   });
 
   group('VaultService and SecureState', () {

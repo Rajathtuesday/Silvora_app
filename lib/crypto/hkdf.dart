@@ -26,12 +26,27 @@ final _hmac = Hmac.sha256();
 /// none of which ever provided one) -- HMAC with an empty key is, after
 /// HMAC's own internal zero-padding to block size, equivalent to RFC
 /// 5869's "HashLen zero bytes" default for a missing salt.
+///
+/// Returns a [SecretKeyData] (not just any [SecretKey]) built with
+/// `overwriteWhenDestroyed: true` so that calling `.destroy()` on the result
+/// -- which SecureState.lock() now does for the cached PRK -- actually
+/// zeroes the underlying buffer instead of being a no-op. The `cryptography`
+/// package's own SecretKeyData defaults `overwriteWhenDestroyed` to false,
+/// so plain `SecretKey(bytes)` (the previous code here) would silently make
+/// `.destroy()` do nothing -- this was flagged in review as "the cached PRK
+/// can't be wiped, the wrapper type doesn't support it," but the wrapper
+/// type does support it, it just needs to be asked for at construction.
+/// `mac.bytes` is copied into a fresh `Uint8List.fromList(...)` first so the
+/// buffer that actually gets zeroed is guaranteed to be a real, in-place-
+/// mutable Uint8List regardless of what concrete list type the installed
+/// version of `cryptography` happens to hand back from `calculateMac`.
 Future<SecretKey> hkdfExtract(Uint8List ikm) async {
   final mac = await _hmac.calculateMac(
     ikm,
     secretKey: SecretKey(const <int>[]),
   );
-  return SecretKey(mac.bytes);
+  final bytes = Uint8List.fromList(mac.bytes);
+  return SecretKeyData(bytes, overwriteWhenDestroyed: true);
 }
 
 /// Expand phase. Cheap -- safe to call as many times as needed with a
