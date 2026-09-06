@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../services/api_services.dart';
+import '../../services/integrity_version_store.dart';
 import '../../theme/silvora_theme.dart';
+import '../../utils/trash_retention.dart';
 
 class TrashScreen extends StatefulWidget {
   const TrashScreen({super.key});
@@ -33,19 +35,6 @@ class _TrashScreenState extends State<TrashScreen> {
       i++;
     }
     return "${d.toStringAsFixed(2)} ${suffixes[i]}";
-  }
-
-  String _daysLeft(dynamic deletedAt) {
-    if (deletedAt == null) return "Unknown";
-    try {
-      final dt = DateTime.parse(deletedAt.toString());
-      final purge = dt.add(const Duration(days: 7));
-      final diff = purge.difference(DateTime.now()).inDays;
-      if (diff <= 0) return "Expires soon";
-      return "$diff days left";
-    } catch (_) {
-      return "7 days";
-    }
   }
 
   Future<void> _restore(String fileId) async {
@@ -99,6 +88,10 @@ class _TrashScreenState extends State<TrashScreen> {
     if (confirmed == true) {
       try {
         await ApiService.permanentlyDeleteFile(fileId);
+        // Hygiene only: file IDs are UUIDs and never reused, so this can't
+        // cause a future rollback-check false negative -- it just keeps the
+        // local last-seen-version cache from growing forever.
+        await IntegrityVersionStore.forget(fileId);
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("File permanently erased.")),
@@ -213,7 +206,6 @@ class _TrashScreenState extends State<TrashScreen> {
                     final fileId  = f["file_id"] as String;
                     final label   = (f["filename"] as String?) ?? "Encrypted File";
                     final size    = f["size"] as int? ?? 0;
-                    final deletedAt = f["deleted_at"];
 
                     return Card(
                       color: SilvoraColors.card,
@@ -269,7 +261,10 @@ class _TrashScreenState extends State<TrashScreen> {
                                       const Icon(Icons.timer_outlined, size: 11, color: SilvoraColors.warn),
                                       const SizedBox(width: 4),
                                       Text(
-                                        _daysLeft(deletedAt),
+                                        TrashRetention.daysLeftLabel(
+                                          purgeAfter: f["purge_after"],
+                                          deletedAt: f["deleted_at"],
+                                        ),
                                         style: const TextStyle(color: SilvoraColors.warn, fontSize: 11),
                                       ),
                                     ],
