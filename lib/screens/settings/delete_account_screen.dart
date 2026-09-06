@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../crypto/argon2.dart';
 import '../../crypto/recovery_crypto.dart';
 import '../../crypto/login_auth.dart';
+import '../../crypto/zeroize.dart';
 import '../../services/api_services.dart';
 import '../../services/auth_client.dart';
 import '../../state/secure_state.dart';
@@ -87,6 +88,10 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
         parallelism: (meta["kdf_parallelism"] ?? 1) as int,
       );
       final loginAuthKey = await LoginAuthCrypto.deriveLoginAuthKey(kek);
+      zeroize(kek); // last use above -- matches the same pattern already
+      // applied in register_screen.dart/recover_screen.dart/
+      // change_password_screen.dart; this screen derives the exact same
+      // kind of transient KEK and was missed when that fix went in.
 
       await ApiService.deleteAccount(RecoveryCrypto.toHex(loginAuthKey));
 
