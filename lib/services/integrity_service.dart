@@ -8,6 +8,7 @@ import '../state/secure_state.dart';
 import '../crypto/hkdf.dart';
 import '../crypto/xchacha.dart';
 import 'auth_client.dart';
+import 'integrity_version_store.dart';
 import 'retry.dart';
 
 /// The decrypted, client-signed integrity manifest for one file.
@@ -19,6 +20,7 @@ import 'retry.dart';
 class IntegrityManifest {
   final int totalChunks;
   final int totalPlainSize;
+  final int version;
 
   /// chunk index -> SHA-256 (hex) of that chunk's *plaintext*.
   final Map<int, String> hashes;
@@ -27,6 +29,7 @@ class IntegrityManifest {
     required this.totalChunks,
     required this.totalPlainSize,
     required this.hashes,
+    required this.version,
   });
 }
 
@@ -57,10 +60,19 @@ class IntegrityService {
   /// integrity manifest. Hashing reads from the source file (not the uploaded
   /// ciphertext), so it is resume-safe: it works even if some chunks were sent
   /// in an earlier session.
+  ///
+  /// [version] is the rollback-protection generation number signed into the
+  /// manifest (see IntegrityVersionStore) -- defaults to 1 since this app has
+  /// no "replace an existing file's content" flow today (every upload gets a
+  /// fresh file_id), so every file's first and only commit is generation 1.
+  /// The parameter exists so a future re-upload-in-place feature, or a
+  /// server-assigned counter, has somewhere to plug in without reshaping this
+  /// method's signature.
   static Future<bool> buildAndUpload({
     required String fileId,
     required File file,
     required int chunkSize,
+    int version = 1,
   }) async {
     final fileLen = await file.length();
     final totalChunks = fileLen == 0 ? 0 : (fileLen / chunkSize).ceil();
@@ -81,6 +93,7 @@ class IntegrityService {
     final manifest = {
       "v": 1,
       "file_id": fileId,
+      "version": version,
       "total_chunks": totalChunks,
       "total_plain_size": fileLen,
       "chunks": chunkHashes,
@@ -100,7 +113,7 @@ class IntegrityService {
 
     final body = utf8.encode(envelope);
     try {
-      return await retry<bool>(
+      final ok = await retry<bool>(
         () async {
           final res = await AuthClient.post(
             _url("/file/$fileId/integrity/"),
@@ -111,6 +124,14 @@ class IntegrityService {
         },
         retryIf: (ok) => !ok,
       );
+      if (ok) {
+        // Establish this device's baseline immediately at upload time, not
+        // only on first download -- otherwise a rollback delivered before
+        // this file is ever downloaded would have nothing to be compared
+        // against.
+        await IntegrityVersionStore.recordSeen(fileId, version);
+      }
+      return ok;
     } catch (_) {
       return false;
     }
@@ -167,10 +188,34 @@ class IntegrityService {
       hashes[(cm["i"] as num).toInt()] = cm["h"] as String;
     }
 
+    // Missing "version" means this manifest predates this fix (2026-09-06) --
+    // treat it as generation 1, the lowest possible value, so an old file
+    // uploaded before this change doesn't spuriously fail to download.
+    final version = (m["version"] as num?)?.toInt() ?? 1;
+
+    // 🔐 ROLLBACK/REPLAY CHECK: an old-but-validly-signed manifest is still a
+    // manifest this exact key can decrypt and this exact key signed -- AEAD
+    // authentication alone can never catch a compromised/malicious server
+    // serving back an earlier, genuinely legitimate-at-the-time bundle for
+    // this file instead of the current one. Comparing against the highest
+    // version this device has already recorded (upload or a prior download)
+    // is what actually catches that. See IntegrityVersionStore for the
+    // trust-on-first-use caveat this depends on.
+    final lastSeen = await IntegrityVersionStore.getLastSeen(fileId);
+    if (lastSeen != null && version < lastSeen) {
+      throw Exception(
+        "Integrity check failed: this file's manifest version ($version) is "
+        "older than the version this device already saw ($lastSeen). "
+        "Refusing to decrypt what may be a rolled-back file.",
+      );
+    }
+    await IntegrityVersionStore.recordSeen(fileId, version);
+
     return IntegrityManifest(
       totalChunks: (m["total_chunks"] as num).toInt(),
       totalPlainSize: (m["total_plain_size"] as num).toInt(),
       hashes: hashes,
+      version: version,
     );
   }
 }
