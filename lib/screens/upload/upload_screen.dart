@@ -157,6 +157,20 @@ class _UploadScreenState extends State<UploadScreen> {
 
     final resumeInfo = await UploadService.resumeUpload(uploadId);
 
+    // resumeUpload() already retries transient failures internally. If it
+    // STILL couldn't reach the server and this is an actual resume (not a
+    // brand new upload we just created a few lines up, where "nothing
+    // uploaded yet" is genuinely true), we must not guess. Falling through
+    // to `resumeInfo?.uploaded ?? <int>{}` below would treat "couldn't
+    // check" the same as "zero chunks uploaded," silently re-uploading an
+    // entire large file from scratch on the same flaky connection that
+    // caused the original interruption.
+    if (resumeInfo == null && existingUploadId != null) {
+      setState(() => _isUploading = false);
+      _showSnack("Couldn't check upload status. Will retry on resume.", isError: true);
+      return;
+    }
+
     // App was killed after commit but before we cleared the pending marker:
     // the file is already safe on the server, so just finish cleanly.
     if (resumeInfo != null && resumeInfo.committed) {

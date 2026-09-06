@@ -88,17 +88,28 @@ class UploadService {
   // =============================================================
   static Future<ResumeInfo?> resumeUpload(String uploadId) async {
     try {
-      final res = await AuthClient.get(
-        _url("/file/$uploadId/resume/"),
-      );
+      // Same retry-with-backoff every other network call in this file
+      // already gets. Without it, a transient blip on THIS specific call
+      // (the exact kind of flaky connection a resume flow exists to survive)
+      // returned null on the first failure with no retry at all -- and the
+      // caller treated that null as "zero chunks uploaded so far," silently
+      // re-uploading a large file from scratch instead of actually resuming.
+      return await retry<ResumeInfo?>(
+        () async {
+          final res = await AuthClient.get(
+            _url("/file/$uploadId/resume/"),
+          );
 
-      if (res.statusCode != 200) return null;
+          if (res.statusCode != 200) return null;
 
-      final decoded = jsonDecode(res.body);
-      final List<dynamic> uploaded = decoded["uploaded_indices"];
-      return ResumeInfo(
-        uploaded: uploaded.map((e) => e as int).toSet(),
-        committed: decoded["upload_state"] == "committed",
+          final decoded = jsonDecode(res.body);
+          final List<dynamic> uploaded = decoded["uploaded_indices"];
+          return ResumeInfo(
+            uploaded: uploaded.map((e) => e as int).toSet(),
+            committed: decoded["upload_state"] == "committed",
+          );
+        },
+        retryIf: (result) => result == null,
       );
     } catch (_) {
       return null;
