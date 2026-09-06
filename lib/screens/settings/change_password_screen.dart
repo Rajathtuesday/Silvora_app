@@ -24,6 +24,7 @@ class ChangePasswordScreen extends StatefulWidget {
 }
 
 class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
+  final _currentPasswordCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _confirmCtrl = TextEditingController();
   bool _isLoading = false;
@@ -31,6 +32,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
 
   @override
   void dispose() {
+    _currentPasswordCtrl.dispose();
     _passwordCtrl.dispose();
     _confirmCtrl.dispose();
     super.dispose();
@@ -55,10 +57,36 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
       setState(() => _error = "Vault is locked. Unlock it first.");
       return;
     }
+    if (_currentPasswordCtrl.text.isEmpty) {
+      setState(() => _error = "Enter your current password.");
+      return;
+    }
 
     setState(() { _isLoading = true; _error = null; });
 
     try {
+      // Prove we actually know the current password before proceeding --
+      // same requirement delete_account_screen.dart already enforces.
+      // Fetched fresh (not assumed) since this account's real KDF params
+      // may differ from the fixed constants used for the NEW password below.
+      final metaRes = await AuthClient.get(
+        Uri.parse("${SecureState.serverUrl}/api/auth/master-key/"),
+      );
+      if (metaRes.statusCode != 200) {
+        setState(() => _error = "Could not verify your current password. Try again.");
+        return; // `finally` below resets _isLoading
+      }
+      final meta = jsonDecode(metaRes.body) as Map<String, dynamic>;
+      final currentKek = await Argon2Kdf.deriveKey(
+        password: _currentPasswordCtrl.text,
+        salt: RecoveryCrypto.fromHex(meta["kdf_salt_hex"] as String),
+        iterations: (meta["kdf_iterations"] ?? 3) as int,
+        memoryKb: (meta["kdf_memory_kb"] ?? 65536) as int,
+        parallelism: (meta["kdf_parallelism"] ?? 1) as int,
+      );
+      final currentLoginAuthKey = await LoginAuthCrypto.deriveLoginAuthKey(currentKek);
+      zeroize(currentKek); // last use -- same pattern as every other transient KEK here
+
       final masterKey = SecureState.masterKey;
       final rand = Random.secure();
       final salt = Uint8List.fromList(List.generate(16, (_) => rand.nextInt(256)));
@@ -79,6 +107,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
         Uri.parse("${SecureState.serverUrl}/api/auth/master-key/change-password/"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
+          "current_password": _hex(currentLoginAuthKey),
           "new_password": _hex(loginAuthKey),
           "enc_master_key": _hex(envelope),
           "enc_master_key_nonce": _hex(Uint8List.fromList(nonce)),
@@ -95,6 +124,8 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
           const SnackBar(content: Text("Password changed.")),
         );
         Navigator.pop(context);
+      } else if (res.statusCode == 403) {
+        setState(() => _error = "Current password is incorrect.");
       } else {
         setState(() => _error = "Couldn't change password. Try again.");
       }
@@ -126,6 +157,12 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                 style: TextStyle(color: SilvoraColors.textSecondary, height: 1.5),
               ),
               const SizedBox(height: 24),
+              TextField(
+                controller: _currentPasswordCtrl,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: "Current password", prefixIcon: Icon(Icons.lock_person_outlined)),
+              ),
+              const SizedBox(height: 16),
               TextField(
                 controller: _passwordCtrl,
                 obscureText: true,
