@@ -12,6 +12,9 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 class MainActivity : FlutterActivity() {
     private val channelName = "silvora/mediastore"
@@ -105,9 +108,37 @@ class MainActivity : FlutterActivity() {
         )
         val pathFound = suspiciousPaths.any { File(it).exists() }
 
+        // Real incident, 2026-09-07: this used to run inline on the calling
+        // thread (the Flutter method channel's, which is the main/UI thread)
+        // with no timeout at all. `Runtime.exec()` spawning a real OS process
+        // and `readLine()` blocking on its output can hang indefinitely on
+        // certain devices/Android builds -- and did, in production: a real
+        // tester's app got stuck on the loading spinner for 5+ minutes
+        // straight, because this single unbounded call was blocking the
+        // entire UI thread before it ever reached AuthGate. The try/catch
+        // here only ever protected against a THROWN exception -- it did
+        // nothing for a call that simply never returns.
+        //
+        // Bounded to 2 seconds on a background executor instead. A genuinely
+        // rooted device with a normally-behaving shell answers this in a few
+        // milliseconds; 2 seconds is generous headroom, not a compromise.
+        // Timing out (or any other failure) falls back to `false`, matching
+        // the same deliberate fail-open philosophy this whole check already
+        // uses for thrown exceptions -- a slow/broken check must never lock a
+        // real user out of their own vault on an otherwise-clean device.
         val suExecutable = try {
-            val process = Runtime.getRuntime().exec(arrayOf("which", "su"))
-            process.inputStream.bufferedReader().readLine() != null
+            val executor = Executors.newSingleThreadExecutor()
+            val future = executor.submit<Boolean> {
+                val process = Runtime.getRuntime().exec(arrayOf("which", "su"))
+                process.inputStream.bufferedReader().readLine() != null
+            }
+            try {
+                future.get(2, TimeUnit.SECONDS)
+            } finally {
+                executor.shutdownNow()
+            }
+        } catch (e: TimeoutException) {
+            false
         } catch (e: Exception) {
             false
         }

@@ -1,4 +1,5 @@
 // lib/screens/device_security_gate.dart
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 
 import '../services/device_security_service.dart';
@@ -49,7 +50,14 @@ class _DeviceSecurityGateState extends State<DeviceSecurityGate> {
     }
 
     final status = _status!;
-    if (!status.isCompromised) {
+    // Debug builds never reach real users -- the Play Store only ever ships
+    // release builds, so this doesn't weaken what an actual user is
+    // protected against. It exists because testing this app at all requires
+    // USB debugging (and often Developer Options) turned on by definition,
+    // which is exactly what this gate exists to block -- same reasoning
+    // MainActivity.kt already applies to FLAG_SECURE (skipped in debug
+    // builds so Play Store screenshots can be taken).
+    if (kDebugMode || !status.isCompromised) {
       return const AuthGate();
     }
 
