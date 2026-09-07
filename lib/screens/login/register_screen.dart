@@ -45,7 +45,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String _hex(Uint8List b) => RecoveryCrypto.toHex(b);
 
   Future<void> _register() async {
-    final email = _emailCtrl.text.trim();
+    // Lowercase here too, not just relying on the server's own
+    // validate_email to catch it -- same reasoning as login_screen.dart.
+    final email = _emailCtrl.text.trim().toLowerCase();
     final password = _passwordCtrl.text;
     final confirm = _confirmCtrl.text;
 
@@ -222,6 +224,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   controller: _emailCtrl,
                   keyboardType: TextInputType.emailAddress,
                   textInputAction: TextInputAction.next,
+                  // The server lowercases this before storing it (so it can
+                  // match it consistently at login later); stop the keyboard
+                  // auto-capitalizing the first letter in the first place.
+                  textCapitalization: TextCapitalization.none,
                   decoration: const InputDecoration(
                     labelText: "Email",
                     prefixIcon: Icon(Icons.email_outlined),

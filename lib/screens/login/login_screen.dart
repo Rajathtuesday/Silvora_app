@@ -37,7 +37,11 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _doLogin() async {
-    final username = _usernameController.text.trim();
+    // Lowercase on the way in, not just relying on the server to normalise
+    // it -- registration lowercases before storing (Tuesday@gmail.com
+    // becomes tuesday@gmail.com), so a case-sensitive comparison here would
+    // otherwise depend entirely on the backend remembering to do the same.
+    final username = _usernameController.text.trim().toLowerCase();
     final password = _passwordController.text;
 
     if (username.isEmpty || password.isEmpty) return;
@@ -139,6 +143,12 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 48),
                 TextField(
                   controller: _usernameController,
+                  // Registration and the server's own login serializer both
+                  // treat this as lowercase-only -- stop the keyboard from
+                  // auto-capitalizing the first letter in the first place,
+                  // the most common real reason a mismatched case ever
+                  // ends up here to begin with.
+                  textCapitalization: TextCapitalization.none,
                   decoration: const InputDecoration(labelText: "Email or Username"),
                 ),
                 const SizedBox(height: 16),

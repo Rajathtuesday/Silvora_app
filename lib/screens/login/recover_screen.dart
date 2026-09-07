@@ -181,6 +181,7 @@ class _RecoverScreenState extends State<RecoverScreen> {
               TextField(
                 controller: _emailCtrl,
                 keyboardType: TextInputType.emailAddress,
+                textCapitalization: TextCapitalization.none,
                 decoration: const InputDecoration(labelText: "Email", prefixIcon: Icon(Icons.email_outlined)),
               ),
               const SizedBox(height: 16),
