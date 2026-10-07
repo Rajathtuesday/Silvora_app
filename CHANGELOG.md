@@ -6,6 +6,13 @@ project history. For anything earlier, `git log` is the source of truth.
 
 ---
 
+## 2026-10-07
+
+### Changed
+- **Version 1.0.6+7 for the first open testing release** on Google Play (production access granted 2026-10-04). No code changes since 1.0.5+6; the build number goes up because Play rejects an upload whose number is not higher than the last one.
+
+---
+
 ## 2026-09-07
 
 ### Fixed
