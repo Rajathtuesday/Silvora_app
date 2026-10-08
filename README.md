@@ -86,13 +86,15 @@ Navigation is entirely imperative (`Navigator.push`/`MaterialPageRoute`), there'
 
 ## Known gaps, worth knowing about before you assume something works
 
-- **A signing keystore and its password are committed to this repository** (`android/key.properties`, `android/app/upload-keystore.jks`). That means a fresh clone can build a signed release out of the box, which is convenient, but it also means the signing credential has been sitting in git history. Worth rotating the keystore and removing the old one from history at some point, this is a real exposure, not a style nitpick.
-- **`billing/billing_screen.dart` is currently unreachable from the UI.** It's fully built (tier selection, monthly/yearly toggle) but was deliberately pulled from the menu, since Google Play policy requires in-app digital subscriptions to go through Play Billing, and this app instead opens an external browser checkout link. The screen is intact, working code, just dead code pending real Play Billing integration.
-- **`lib/screens/file_view/file_view_screen.dart` is an empty file**, not implemented. `lib/screens/viewers/image_view_screen.dart` and `pdf_view_screen.dart` are implemented but not referenced anywhere, the actual file list uses an inline dialog for previews instead.
-- **Several model, util, and widget files are empty placeholders**: `lib/models/file_metadata.dart`, `lib/models/user.dart`, `lib/utils/converters.dart`, `lib/utils/logger.dart`, `lib/utils/validators.dart`, `lib/widgets/silvora_button.dart`, `lib/widgets/silvora_textfield.dart`. `lib/models/manifest.dart` and `lib/models/chunk_metadata.dart` do have real classes in them, but nothing else in the app actually imports and uses those classes, the real upload/download code builds and parses the equivalent JSON manually instead.
-- **`dio` is listed in `pubspec.yaml` but never imported anywhere.** The app's real HTTP client is the plain `http` package throughout. Safe to remove `dio` as a dependency.
-- **A minor Argon2 parameter inconsistency**: `argon2.dart`'s documented default is `parallelism: 2`, but every actual call site (registration, recovery, password change) explicitly passes `parallelism: 1`. Not a security bug since the value that's actually used is what gets stored and later replayed, but the mismatched default is worth cleaning up so it doesn't mislead the next person reading the file.
+- **Nobody can buy a plan from inside the app yet.** `lib/screens/billing/billing_screen.dart` now contains the Google Play Billing purchase flow (`in_app_purchase`, with the backend's `api/billing/play/` endpoints), but the "Manage subscription" menu entry is still removed in `file_list_screen.dart`, so the screen is unreachable. Re-add the menu entry once a Play purchase has been tested end to end on a real device. Until then, paid plans only happen through the Razorpay web checkout.
+- **The signing keystore exists only on the development machine** (`android/key.properties`, `android/app/upload-keystore.jks`). Both are gitignored and have never been committed. Keep an encrypted backup somewhere safe; if it's lost, the upload key has to be reset through Play Console support.
+- **`lib/screens/viewers/image_view_screen.dart` and `pdf_view_screen.dart` aren't referenced anywhere.** The file list uses an inline dialog for previews instead.
+- **A minor Argon2 parameter inconsistency**: `argon2.dart`'s default is `parallelism: 2`, but every real call site (registration, recovery, password change) passes `parallelism: 1`. Not a security bug, since the value actually used is what gets stored and replayed, but the default misleads the next reader.
+
+(Earlier gaps listed here, the empty placeholder files, the unused `dio` dependency and the committed-keystore warning, are resolved or were wrong and have been removed.)
 
 ## Status
 
-Closed beta. Currently in the Play Console Internal Testing track. Confirm this is still current before repeating it elsewhere, status like this goes stale fast.
+- **4 Oct 2026:** Google Play production access granted, after closed-testing rounds and two refusals.
+- **7 Oct 2026:** version `1.0.6+7` built, signed and sent to the **open testing** track for review.
+- Once open testing is approved, the store listing is `https://play.google.com/store/apps/details?id=cloud.silvora.app` (the backend's `PLAY_STORE_URL`).
