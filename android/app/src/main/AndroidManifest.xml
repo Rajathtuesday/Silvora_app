@@ -1,10 +1,20 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-        <uses-permission android:name="android.permission.INTERNET"/>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <!-- Only needed to write to the public Downloads folder on Android 9 and
          below; Android 10+ uses scoped MediaStore which needs no permission. -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28"/>
+    <!-- open_filex declares broad media read permissions. Play policy only
+         allows them when the system photo picker is not enough. Silvora never
+         reads shared storage: uploads go through the system picker
+         (file_picker, GET_CONTENT) and downloads are opened from the app's
+         private folder, which open_filex opens without any permission. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" tools:node="remove"/>
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove"/>
     <application
         android:label="Silvora"
         android:name="${applicationName}"

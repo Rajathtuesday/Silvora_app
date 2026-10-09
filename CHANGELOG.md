@@ -6,6 +6,16 @@ project history. For anything earlier, `git log` is the source of truth.
 
 ---
 
+## 2026-10-09
+
+### Fixed
+- **Play flagged the app for broad photo and video permissions** (`READ_MEDIA_IMAGES`, `READ_MEDIA_VIDEO`). Silvora never asked for them itself: the `open_filex` plugin (used to open a downloaded file in another app) declares them, plus `READ_MEDIA_AUDIO` and `READ_EXTERNAL_STORAGE`, and they were merged into every build. The app manifest now strips all four with `tools:node="remove"`. Nothing loses access: uploads go through the system file picker (`file_picker`, `GET_CONTENT`), and downloads live in the app's private folder, which `open_filex` opens without asking for any permission. Checked in the built bundle: 1.0.6 carried all four, 1.0.7 carries none.
+
+### Changed
+- **Version 1.0.7+8**, the build that goes to open and closed testing with the permissions removed.
+
+---
+
 ## 2026-10-07
 
 ### Changed
