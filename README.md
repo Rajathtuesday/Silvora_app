@@ -98,4 +98,4 @@ Navigation is entirely imperative (`Navigator.push`/`MaterialPageRoute`), there'
 - **4 Oct 2026:** Google Play production access granted, after closed-testing rounds and two refusals.
 - **7 Oct 2026:** version `1.0.6+7` built, signed and sent to the **open testing** track for review.
 - **9 Oct 2026:** Play's pre-review check flagged the photo/video permissions that the `open_filex` plugin adds. Version `1.0.7+8` removes them (see CHANGELOG) and replaces 1.0.6 on the testing tracks.
-- Once open testing is approved, the store listing is `https://play.google.com/store/apps/details?id=cloud.silvora.app` (the backend's `PLAY_STORE_URL`).
+- **10 Oct 2026:** version `1.0.7+8` approved. Silvora is **live on Google Play in early access** (open testing): `https://play.google.com/store/apps/details?id=cloud.silvora.app` (the backend's `PLAY_STORE_URL`). The website's buttons already point there.

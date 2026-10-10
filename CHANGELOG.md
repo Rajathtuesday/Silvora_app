@@ -6,6 +6,13 @@ project history. For anything earlier, `git log` is the source of truth.
 
 ---
 
+## 2026-10-10
+
+### Released
+- **Version 1.0.7+8 is live on Google Play in early access** (open testing). Google approved it after the photo and video permissions were removed. No code change in this entry: it records the release.
+
+---
+
 ## 2026-10-09
 
 ### Fixed
